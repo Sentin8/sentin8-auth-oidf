@@ -1,0 +1,28 @@
+{
+  "name": "sentin8-auth-oidf",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sentin8:Auth OIDF conformance automation - Playwright TypeScript harness driving the OIDF certification suite against the platform's Flutter auth-ui.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "test:basic": "playwright test tests/oidc-basic.spec.ts",
+    "test:config": "playwright test tests/oidc-config.spec.ts",
+    "test:dynamic": "playwright test tests/oidc-dynamic.spec.ts",
+    "test:logout": "playwright test tests/logout.spec.ts",
+    "test:fapi2": "playwright test tests/fapi2-security.spec.ts",
+    "test:fapi2-signing": "playwright test tests/fapi2-message-signing.spec.ts",
+    "test:fapi1": "playwright test tests/fapi1-advanced.spec.ts",
+    "test:ciba": "playwright test tests/ciba.spec.ts",
+    "lint": "tsc --noEmit",
+    "install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}
