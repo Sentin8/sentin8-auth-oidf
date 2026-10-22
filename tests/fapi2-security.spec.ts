@@ -78,28 +78,49 @@ function seededFapiClients(cell: string): { client: FapiClient; client2: FapiCli
  * suite presents the SAME certificate on its token + resource calls
  * (RFC 8705 self-signed; auth binds `cnf.x5t#S256` at the mint).
  */
-function seededFapiMtlsClients(): { client: FapiClient; client2: FapiClient; mtls?: { cert: string; key: string; ca?: string } } | null {
+function seededFapiMtlsClients(): { client: FapiClient; client2: FapiClient; mtls?: { cert: string; key: string; ca?: string }; mtls2?: { cert: string; key: string; ca?: string } } | null {
   const seedOut = process.env.OIDF_SEED_OUT
     ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
   const cid = text.match(/client_id\(fapi2-mtls\)=([a-f0-9]+)/)?.[1];
   const cid2 = text.match(/client_id\(fapi2-second-mtls\)=([a-f0-9]+)/)?.[1];
-  const certPem = text.match(/mtls_cert_pem\(main\)=([\s\S]*?)-----END CERTIFICATE-----/)?.[1];
+  // The suite's PEMFormatter stripPEM decodes the config values AS
+  // BASE64 (PEM-body extraction + strict Base64). The seed publishes
+  // the RAW base64(DER) forms alongside the PEMs; this parser reads
+  // THOSE (the no-marker stripPEM path validates + passes them
+  // through unchanged - no multiline-PEM row fragility).
+  const certB64 = text.match(/mtls_cert_der_b64\(main\)=([A-Za-z0-9+/=]+)/)?.[1];
+  const certB642 = text.match(/mtls_cert_der_b64\(second\)=([A-Za-z0-9+/=]+)/)?.[1];
   const keyPem = text.match(/mtls_key_pem\(main\)=([\s\S]*?)-----END PRIVATE KEY-----/)?.[1];
-  if (!cid || !cid2 || !certPem || !keyPem) return null;
-  const full = (body: string, kind: string): string =>
-    body.includes(`-----BEGIN ${kind}-----`)
-      ? body.trim()
-      : `-----BEGIN ${kind}-----\n${body}\n-----END ${kind}-----`;
-  const certificate = full(certPem.trim(), 'CERTIFICATE');
-  const privateKey = full(keyPem.trim(), 'PRIVATE KEY');
-  const mk = (id2: string): FapiClient => ({
+  const keyPem2 = text.match(/mtls_key_pem\(second\)=([\s\S]*?)-----END PRIVATE KEY-----/)?.[1];
+  const jwksLine = text.match(/private_jwks\(fapi2-mtls-main\)=\{.*\}/)?.[0]?.split('=').slice(1).join('=');
+  const jwksLine2 = text.match(/private_jwks\(fapi2-mtls-second\)=\{.*\}/)?.[0]?.split('=').slice(1).join('=');
+  if (!cid || !cid2 || !certB64 || !certB642 || !keyPem || !keyPem2 || !jwksLine || !jwksLine2) return null;
+  // The keys have no pre-baked b64 rows: strip PEM + whitespace here.
+  const keyB64 = keyPem
+    .replace(/-----(BEGIN|END) [A-Z ]+-----/g, '')
+    .replace(/\s+/g, '');
+  const keyB642 = keyPem2
+    .replace(/-----(BEGIN|END) [A-Z ]+-----/g, '')
+    .replace(/\s+/g, '');
+  const certificate = certB64;
+  const privateKey = keyB64;
+  let jwksObj: unknown = null;
+  let jwksObj2: unknown = null;
+  try {
+    jwksObj = JSON.parse(jwksLine);
+    jwksObj2 = JSON.parse(jwksLine2);
+  } catch {
+    return null;
+  }
+  const mk = (id2: string, jwks: unknown): FapiClient => ({
     client_id: id2,
     client_auth_type: 'mtls',
     token_endpoint_auth_method: 'self_signed_tls_client_auth',
     scope: 'openid profile email phone address offline_access',
     redirect_uri: suiteCallback(),
+    jwks: { keys: [jwks] },
   });
   // The suite reads the TLS credentials at the TOP-LEVEL config
   // (Environment "config" / "mtls.cert|key|ca") - both clients share
@@ -107,7 +128,15 @@ function seededFapiMtlsClients(): { client: FapiClient; client2: FapiClient; mtl
   // Acme root covers the self-signed thumbprint checks in the OP.
   const caPem = readFileSync(process.env.SENTIN8_TLS_CA_PEM!
     ?? join(resultsDir(), '..', '..', '..', '.run', 'secrets', 'acme-ca', 'root-ca.crt'), 'utf8');
-  return { client: mk(cid), client2: mk(cid2), mtls: { cert: certificate, key: privateKey, ca: caPem } };
+  // The suite wants SEPARATE TLS credential sections per client
+  // (mtls.* for client 1, mtls2.* for client 2 - no shared private
+  // keys); the ca rides both.
+  return {
+    client: mk(cid, jwksObj),
+    client2: mk(cid2, jwksObj2),
+    mtls: { cert: certificate, key: privateKey, ca: caPem },
+    mtls2: { cert: certB642, key: keyB642, ca: caPem },
+  };
 }
 
 // The FAPI2 plan's variant axes (the suite REQUIRES them at plan
