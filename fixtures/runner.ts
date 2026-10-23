@@ -263,7 +263,15 @@ async function runModuleOnPage(
     // "Illegal test state change: FINISHED -> RUNNING" phantom), and
     // terminal modules accept nothing at all.
     const runner = status === 'WAITING' ? await suiteApi.getRunner(runnerId) : null;
-    const urls: string[] = runner?.browser?.urls ?? [];
+    let urls: string[] = runner?.browser?.urls ?? [];
+    // A RE-ARMED drive (the 45s WAITING re-arm) must not fire after the
+    // suite has already turned terminal (the 'Illegal test state change:
+    // FINISHED -> RUNNING' phantom) - the terminal check re-runs right
+    // before the drive: a module that settled during the 1.5s sleep
+    // aborts here.
+    if (status && TERMINAL.has(status)) {
+      break;
+    }
     // The SPA's INTERNAL navigation chain (authorize -> sign-in ->
     // consent) is invisible to the suite: the consent screen's task
     // must fire from OUR side when the page lands there. Exposed
@@ -300,6 +308,24 @@ async function runModuleOnPage(
       driveCounts.set(u, drives + 1);
       lastDrivenUrl = u;
       lastDriveAt = Date.now();
+      // LAST MOMENT: the plan status may have turned terminal in the API
+      // round-trips between the loop's top fetch and this drive (the
+      // back-channel modules settle in ~2s) - a drive dispatched after
+      // FINISHED produces the suite's 'Illegal test state change:
+      // FINISHED -> RUNNING' phantom. Re-check then abort.
+      const statusNow = await suiteApi.getPlan(planId);
+      const mineNow = statusNow.modules.find((m) => m.instances?.includes(runnerId));
+      if (mineNow?.status && TERMINAL.has(mineNow.status)) {
+        logStep(`  drive aborted - module turned ${mineNow.status} before the goto`);
+        // Undo the visit accounting - the aborted drive must not consume
+        // the url's visit budget (the re-arm can still re-drive it if
+        // the status flips back to WAITING).
+        seenUrls.delete(u);
+        driveCounts.set(u, drives);
+        seenUrls.delete(lastDrivenUrl);
+        seenUrls.delete(lastDrivenUrl || u);
+        break;
+      }
       const handled = await driveBrowserBlock(page, browserBlock, u, drives + 1);
       if (!handled) {
         logStep(`  NO BROWSER TASK MATCHES ${u.slice(0, 90)} (the module stalls without it)`);
