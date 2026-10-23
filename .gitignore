@@ -3,3 +3,7 @@ node_modules/
 .tmp/
 playwright-report/
 test-results/
+# Rig TLS material (copied from .run/secrets by `make conformance-up`) - never commit.
+conformance/root-ca.crt
+conformance/suite-localhost-emobix.crt
+conformance/suite-localhost-emobix.key

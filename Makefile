@@ -9,10 +9,15 @@
 # (test bridge), enforce no-skip/warning-zero, export logs to results/.
 #
 # Prerequisites (rig bootstrap, auth DESIGN §9a.2):
-#   make -C .. start          # platform fleet (classical mode for rig runs)
-#   make -C .. conformance-up
+#   make -C .. start-conformance  # platform fleet in the rig posture
+#                                 # (classical TLS + FAPI ciphers + self-signed
+#                                 # client certs - no .env edit needed)
+#   make -C .. conformance-up     # suite stack (this target implies the above)
 #   make -C .. conformance-seed
 #   pnpm install && pnpm run install-browsers (once)
+#
+# The rig collateral (suite compose, seed script, runbook) lives here in
+# conformance/ - moved from the group scripts/ directory (OC-13).
 SHELL := /bin/bash
 
 .PHONY: help install test oidc-basic fapi2 fapi1 ciba logout results

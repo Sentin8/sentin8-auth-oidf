@@ -50,8 +50,9 @@ bridge), not the temporary HTML login page (`/oauth/login`).
 ## Prerequisites (one-time)
 
 ```bash
-# tree root (sentin8/)
-make start               # classical mode for rig runs (SENTIN8_TLS_PQ_MODE)
+# tree root (sentin8/) — the rig posture ships from the target itself
+# (classical TLS + FAPI ciphers + self-signed client certs; no .env edit)
+make start-conformance   # platform fleet in the rig posture
 make conformance-up      # suite stack (mongo + server + nginx)
 make conformance-seed    # cert tenant: org/env/user/clients (no SQL)
 cd sentin8-auth-oidf
