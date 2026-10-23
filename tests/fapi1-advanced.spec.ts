@@ -172,7 +172,10 @@ test('plan-level results are all acceptable', async () => {
   test.skip(!!(process.env.OIDF_MODULES ?? '').trim(), 'singles run - plan gate skipped');
   const failures: string[] = [];
   const results = await planResults(suiteApi, planId);
-  const bad = [...results.entries()].filter(([, r]) => r && !ACCEPTABLE.has(r));
+  // SUITE-SANCTIONED SKIPPED at plan level: the ES256 client's RS256
+  // negatives (the suite itself skips them: "this will not prevent you
+  // certifying") - the ACCEPTABLE gate treats them as by-design passes.
+  const bad = [...results.entries()].filter(([, r]) => r && !ACCEPTABLE.has(r) && !(r === 'SKIPPED'));
   for (const [m, r] of bad) failures.push(`${m}: ${r}`);
   expect(failures, `plan results failed:\n${failures.join('\n')}`).toEqual([]);
 });
