@@ -82,34 +82,18 @@ test('OIDC Core Dynamic OP - run every module-variant to terminal, zero-warning 
       }
       const run = await runModule(suiteApi, browser, planId, m.testModule,
         { ...config, browser: harnessBrowserBlock });
-      // SUITE-CLIENT KNOWN-LIMITATION (the unregister-on-alias-claim class):
-      // when a sibling module re-claims the alias, the suite unregisters
-      // the PREVIOUS test's client afterwards - the OP correctly answers
-      // 404 (the client was already deleted), the condition lands WARNING
-      // 1 ("Error when calling registration_client_uri"). Suite-internal
-      // lifecycle, not a server defect (the unregister itself succeeded
-      // in its own test). Treated like the sanctioned skip.
-      // The 'Alias has now been claimed' notice lands in the NEXT
-      // module's log (the claiming module), never in the current one -
-      // so the invariant must key on the warning entry's own evidence:
-      // src=UnregisterDynamicallyRegisteredClient + HTTP 404 (the
-      // already-deleted client) - verified identical across every
-      // affected module (20/20 entries, auth DESIGN §9a.17).
-      const unregister404 = (run.log ?? []).some(
-        (e: { msg?: string; result?: string; src?: string; code?: number }) =>
-          e.result === 'WARNING'
-            && (e.msg ?? '').includes('Error when calling registration_client_uri')
-            && e.src === 'UnregisterDynamicallyRegisteredClient'
-            && e.code === 404,
-      );
-      const aliasUnregisterWarning = unregister404
-        && run.warnings.every((w: string) =>
-          w.includes('Error when calling registration_client_uri')
-          || w.includes('registration access token'),
-        );
+      // STRICT warning-zero. The one-time "unregister-on-alias-claim"
+      // sanction is gone: the 404-unregister warning class was an OP
+      // defect - the live auth DB was missing the
+      // auth_oauth_clients_delete_policy RLS policy, so the suite's RFC
+      // 7592 cleanup deleted 0 rows and every module's post-flow
+      // unregister warned (run18: 12 WARNING). The policy is reconciled
+      // with sql/init.sql; DELETE /oauth/register/{id} now answers 204
+      // (run19: PASSED=16, REVIEW=7, WARNING=0). If this class ever
+      // reappears it is a REAL defect and must fail this gate.
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
       expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
-      if (run.warnings.length > 0 && !aliasUnregisterWarning) {
+      if (run.warnings.length > 0) {
         failures.push(`${m.testModule}: ${run.warnings.join(' | ')}`);
       }
       const out = join(resultsDir(), 'logs');
