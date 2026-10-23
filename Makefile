@@ -20,7 +20,7 @@
 # conformance/ - moved from the group scripts/ directory (OC-13).
 SHELL := /bin/bash
 
-.PHONY: help install test oidc-basic fapi2 fapi1 ciba logout results
+.PHONY: help install test oidc-basic oidc-config oidc-dynamic fapi2 fapi1 ciba logout results
 
 help: ## Show this help
 	@echo "sentin8-auth-oidf (OIDF conformance automation)"
@@ -35,6 +35,12 @@ test: ## Run every profile suite (serial)
 
 oidc-basic: ## OIDC Core Basic OP (35 modules, warning-zero)
 	@pnpm run test:basic
+
+oidc-config: ## OIDC Core Config OP (discovery completeness, warning-zero)
+	@pnpm run test:config
+
+oidc-dynamic: ## OIDC Core Dynamic OP (RFC 7591 DCR cells, warning-zero)
+	@pnpm run test:dynamic
 
 fapi2: ## FAPI 2 Security Profile
 	@pnpm run test:fapi2

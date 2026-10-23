@@ -279,9 +279,13 @@ export class SuiteApi {
         ...(init.headers ?? {}),
       },
     });
-    // Node fetch needs the agent-level TLS config; the rig's leaf is
-    // platform-CA-signed but Node's bundle may lack it.
-    return res.json() as Promise<T>;
+    // The suite occasionally answers 204/empty on racey GETs (plan
+    // re-read right after the last module settles) - treat an empty
+    // body as unknown JSON rather than throwing "Unexpected end of
+    // JSON input" (the caller's null-guard handles the rest).
+    const text = await res.text();
+    if (!text.trim()) return undefined as T;
+    return JSON.parse(text) as T;
   }
 
   /** GET a plan (its modules + per-module results). */
@@ -362,6 +366,28 @@ export class SuiteApi {
   /** A runner's current exposed state (browser URLs + status). */
   async getRunner(runnerId: string): Promise<any> {
     return this.request(`/api/runner/${runnerId}`);
+  }
+
+  /** The session-cookie header for raw fetch callers (the harness's
+   * runner-resume action rides the same JSESSIONID devmode contract). */
+  cookieHeader(): Record<string, string> {
+    return this.cookie ? { Cookie: this.cookie } : {};
+  }
+
+  /** Resume a WAITING runner (the suite's manual 'Start' button = the
+   * POST /api/runner/<instance-id> devmode action - the rotate-keys
+   * two-phase module's phase B starts here). */
+  async resumeRunner(runnerId: string): Promise<'ok' | 'error'> {
+    await this.ensureCookie();
+    try {
+      const res = await fetch(`${SUITE_BASE}/api/runner/${encodeURIComponent(runnerId)}`, {
+        method: 'POST',
+        headers: this.cookieHeader(),
+      });
+      return res.ok ? 'ok' : 'error';
+    } catch {
+      return 'error';
+    }
   }
 
   /** A runner's event log (array of entries). */

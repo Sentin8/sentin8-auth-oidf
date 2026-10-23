@@ -256,6 +256,8 @@ async function runModuleOnPage(
   // EVERY auth_req_id the module's flow issues gets completed once
   // (the paired-client modules drive two backchannel calls).
   const cibaCompleted = new Set<string>();
+  // The rotate-keys modules: one forced rotation + resume per runner.
+  const rotateCompleted = new Set<string>();
   const certAuthBase = (await import('./env.js')).certAuthHost();
 
   // Terminal detection rides the PLAN's per-module status (the runner
@@ -363,6 +365,35 @@ async function runModuleOnPage(
             logStep(`  screenshot upload failed for ${ph}`);
           }
         }
+      }
+    }
+    // The rotate-keys operator action (the two-phase
+    // oidcc-server-rotate-keys module): when the runner log carries the
+    // 'Please rotate' instruction, force a platform key rotation
+    // (CLI-signed internal rotate) and RESUME the runner with the
+    // suite's start action (POST /api/runner/<instance>). Phase B then
+    // fetches the JWKS again and finds the new key.
+    if (!rotateCompleted.has(runnerId)) {
+      const log = await suiteApi.getLog(runnerId);
+      const needsRotate = log.some(
+        (e: { msg?: string }) => (e.msg ?? '').includes('Please rotate the keys'),
+      );
+      if (needsRotate) {
+        rotateCompleted.add(runnerId);
+        try {
+          const { execFileSync } = await import('node:child_process');
+          const cli = '/home/hamid/dev/sentin8.new/sentin8/sentin8-cli/target/release/sentin8-cli';
+          execFileSync(cli, ['call', 'auth', 'POST', '/v1/internal/keys/rotate', '--body', '{"force":true}'], {
+            stdio: 'pipe',
+            timeout: 60_000,
+          });
+          logStep('  OP keys rotated (force) - resuming rotate-keys phase B');
+        } catch (e) {
+          logStep(`  key rotate failed: ${String(e).slice(0, 120)}`);
+        }
+        const resumed = await suiteApi.resumeRunner(runnerId);
+        logStep(`  rotate-keys phase B resumed: ${resumed}`);
+        await page.waitForTimeout(2_000);
       }
     }
     // The CIBA approval hook: drive the OP's assisted-login page once,
