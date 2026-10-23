@@ -248,6 +248,15 @@ async function runModuleOnPage(
   let pageOk = true;
   // Screenshot placeholders satisfied in THIS run (upload once).
   const uploaded = new Set<string>();
+  // CIBA: the OP's out-of-band user approval. The suite only polls the
+  // token endpoint; the authentication device = OUR harness. When the
+  // runner log shows the backchannel response (auth_req_id), drive the
+  // OP's assisted-login page (sign-in bridge + Confirm) ONCE.
+  const cibaApproval = /ciba/i.test(module);
+  // EVERY auth_req_id the module's flow issues gets completed once
+  // (the paired-client modules drive two backchannel calls).
+  const cibaCompleted = new Set<string>();
+  const certAuthBase = (await import('./env.js')).certAuthHost();
 
   // Terminal detection rides the PLAN's per-module status (the runner
   // record has no status field; the plan JSON does - refreshed each
@@ -353,6 +362,65 @@ async function runModuleOnPage(
           } catch {
             logStep(`  screenshot upload failed for ${ph}`);
           }
+        }
+      }
+    }
+    // The CIBA approval hook: drive the OP's assisted-login page once,
+    // as the authenticating user (sign-in bridge + Confirm press).
+    if (cibaApproval) {
+      const log = await suiteApi.getLog(runnerId);
+      const fresh: string[] = [];
+      for (const e of log) {
+        const back = e?.backchannel_authentication_endpoint_response;
+        if (typeof back === 'string') {
+          try {
+            const parsed = JSON.parse(back);
+            const id2 = parsed?.auth_req_id;
+            if (typeof id2 === 'string' && !cibaCompleted.has(id2)) fresh.push(id2);
+          } catch {
+            // not yet parseable
+          }
+        }
+      }
+      if (fresh.length > 0) {
+        // The module's contract: TWO pending polls per auth_req_id
+        // BEFORE the approval's token grant - hold past the second poll
+        // (interval 5s x3 for api latency).
+        await new Promise((r) => setTimeout(r, 9_000));
+        try {
+          const { CERT_USER } = await import('./env.js');
+          const base = certAuthBase;
+          const signIn = await fetch(`${base}/v1/sign-in`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: CERT_USER.email, password: CERT_USER.password }),
+          });
+          if (!signIn.ok) {
+            logStep(`  CIBA api sign-in failed: ${signIn.status}`);
+            for (const id2 of fresh) cibaCompleted.add(id2);
+          } else {
+            const body = (await signIn.json()) as { token?: string };
+            const deny = /user-rejects/i.test(module);
+            if (deny) logStep('  CIBA deny mode (user-rejects module)');
+            for (const id2 of fresh) {
+              cibaCompleted.add(id2);
+              // Both approve and deny route through the OP's dedicated
+              // approval endpoint - it resolves the ping delivery for the
+              // ping-mode modules (the assisted/complete path does not
+              // notify, which stalls the suite's ping cell at WAITING).
+              const complete = await fetch(`${base}/v1/ciba/approve`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${body.token ?? ''}`,
+                },
+                body: JSON.stringify({ auth_req_id: id2, approved: !deny }),
+              });
+              logStep(`  CIBA ${deny ? 'deny' : 'approve'} ${id2.slice(0, 8)}: ${complete.status}`);
+            }
+          }
+        } catch (e) {
+          logStep(`  CIBA approval api failed: ${String(e).slice(0, 120)}`);
         }
       }
     }

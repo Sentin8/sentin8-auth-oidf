@@ -100,6 +100,12 @@ export const CONFORMANCE_ALIAS = 'sentin8-local';
 export function suiteCallback(): string {
   return `${SUITE_BASE}/test/a/${CONFORMANCE_ALIAS}/callback`;
 }
+/** The suite's CIBA ping receiver (auth DESIGN §9a.15): the OP POSTs the
+ * ping notification here at approval time; the suite maps it back to the
+ * WAITING module by the request's auth_req_id. */
+export function suiteCibaNotification(): string {
+  return `${SUITE_BASE}/test/a/${CONFORMANCE_ALIAS}/ciba-notification-endpoint`;
+}
 
 /**
  * The certification test user (provisioned by `make conformance-seed`;
