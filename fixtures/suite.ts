@@ -294,6 +294,12 @@ export class SuiteApi {
   /** GET a plan (its modules + per-module results). */
   async getPlan(planId: string): Promise<SuitePlan> {
     const raw = await this.request<any>(`/api/plan/${planId}`);
+    if (!raw) {
+      // The plan document can vanish under load (the suite's internal
+      // cleanup raced our read) - answer the empty-plan shape instead of
+      // crashing on undefined access; callers null-guard modules[].
+      return { id: planId, planName: '', modules: [] };
+    }
     return {
       id: raw._id ?? raw.id,
       planName: raw.planName,

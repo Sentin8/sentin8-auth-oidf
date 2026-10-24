@@ -172,6 +172,16 @@ test.beforeAll(async () => {
   (config.server as Record<string, unknown>).jwks = jwks;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (config as Record<string, unknown>).server_jwks = jwks;
+  // The issuer-initiated offer URL: the offer LANDING page rides the ISSUER
+  // (DESIGN 9a.20) with the client/redirect/scope bound through pass-through
+  // query params (the suite's UriComponentsBuilder preserves them when it
+  // appends credential_offer), and the issuer_state we hand the offer grant.
+  const issuerState = `wlt-${Date.now()}`;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (config.vci as Record<string, unknown>).issuer_state = issuerState;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (config.vci as Record<string, unknown>).credential_offer_endpoint =
+    `${certAuthHost()}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
   suiteApi = new SuiteApi();
   logStep(`creating plan: ${config.description}`);
 });

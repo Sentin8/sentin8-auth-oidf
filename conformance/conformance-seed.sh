@@ -205,11 +205,13 @@ case "$PROFILE" in
   vci_haip)
     # OID4VCI HAIP cells: the vci posture PLUS attestation-based client
     # authentication (draft-ietf-oauth-attestation-based-client-auth;
-    # auth DESIGN §9a.19). The allow flag + the trust anchor (the
-    # attester's self-signed leaf PEM) + the expected attestation iss
-    # ride the profile row - discovery then advertises
+    # auth DESIGN §9a.19). Sender constraint = DPoP (the plan's whole
+    # fapi2 family runs sender_constrain=dpop - the require-dpop gate
+    # enforces it server-side, auth DESIGN §9a.22). The allow flag + the
+    # trust anchor (the attester's self-signed leaf PEM) + the expected
+    # attestation iss ride the profile row - discovery then advertises
     # attest_jwt_client_auth and the attestation alg lists.
-    FLAGS='"require_par":true,"require_jarm":false,"require_dpop":false,"require_iss":true,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
+    FLAGS='"require_par":true,"require_jarm":false,"require_dpop":true,"require_iss":true,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
   *)
     FLAGS='"require_par":false,"require_jarm":false,"require_dpop":false,"require_iss":false,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
 esac
@@ -403,26 +405,26 @@ dcr() { # dcr <name> <json-extra>
   # refresh_token pair is invalid for a CIBA-only client); JSON forbids
   # duplicate fields, so the base pair is omitted whenever the extra
   # supplies its own grant_types.
-  local grants="\"grant_types\":[\"authorization_code\",\"refresh_token\"],"
+  local grants=",\"grant_types\":[\"authorization_code\",\"refresh_token\"]"
   if [[ "$extra" == *'"grant_types"'* ]]; then grants=""; fi
   # Same rule for redirect_uris: the extra may supply its own array
   # (e.g. the happy-flow client2's query-parameter variant).
-  local uris="\"redirect_uris\":[\"$CALLBACK\"],"
-  if [[ "$extra" == *'"redirect_uris"'* ]]; then uris=""; fi
-  # Same duplicate-field rule for scope (serde rejects duplicates - the
-  # VCI clients carry their own credential scopes).
-  local scope="\"scope\":\"openid profile email phone address offline_access\","
-  if [[ "$extra" == *'"scope"'* ]]; then scope=""; fi
-  local body="{
-    \"client_name\":\"$name\",
-    $uris
-    $grants
-    \"response_types\":[\"code\"],
-    $scope
-    \"code_challenge_method\":\"S256\",
-    \"consent_required\":$CONSENT_REQUIRED${extra:+,$extra}
-  }"
-  # banner-strip not needed (curl output); parse client fields with jget.
+  # Duplicate-field rules: the extras may override the base members, so
+  # the base fragment drops out when the extra supplies the same key.
+  local parts=()
+  parts+=("\"client_name\":\"$name\"")
+  if [[ "$extra" != *'"redirect_uris"'* ]]; then parts+=("\"redirect_uris\":[\"$CALLBACK\"]"); fi
+  if [[ "$extra" != *'"grant_types"'* ]]; then parts+=("\"grant_types\":[\"authorization_code\",\"refresh_token\"]"); fi
+  parts+=("\"response_types\":[\"code\"]")
+  if [[ "$extra" != *'"scope"'* ]]; then parts+=("\"scope\":\"openid profile email phone address offline_access\""); fi
+  parts+=("\"code_challenge_method\":\"S256\"")
+  if [[ "$extra" != *'"consent_required"'* ]]; then parts+=("\"consent_required\":$CONSENT_REQUIRED"); fi
+  # Join with commas into the final body.
+  local body
+  body=$(printf '%s\n' "${parts[@]}" | paste -sd, -)
+  if [[ -n "$extra" ]]; then body="$body,$extra"; fi
+  body="{$body}"
+  # Banner-strip not needed (curl output); parse client fields with jget.
   curl -sk -X POST "$CERT_AUTH_HOST/oauth/register" \
     -H 'Content-Type: application/json' -d "$body"
 }
@@ -555,8 +557,8 @@ VCI_PUB2=$(echo "$VCI_KEYS" | python3 -c "import json,sys; print(json.dumps(json
 VCI_PRIV1=$(echo "$VCI_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['p1']))")
 VCI_PRIV2=$(echo "$VCI_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['p2']))")
 VCI_SCOPE='openid profile email offline_access credential:VerifiedPersonCredential credential:VerifiedEmployeeCredential eudi.pid.1 eudi.pid.1.nobinding eudi.pid.1.attestation eudi.pid.1.jwt.keyattest eudi.pid.1.attestation.keyattest eudi.pid.1.jwt_and_attestation.keyattest openid.example.cert.1'
-VCI_JSON="$(dcr "cert-vci" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$VCI_PUB1,\"scope\":\"$VCI_SCOPE\"")"
-VCI2_JSON="$(dcr "cert-vci-2" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$VCI_PUB2,\"scope\":\"$VCI_SCOPE\"")"
+VCI_JSON="$(dcr "cert-vci" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$VCI_PUB1,\"scope\":\"$VCI_SCOPE\",\"consent_required\":true")"
+VCI2_JSON="$(dcr "cert-vci-2" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$VCI_PUB2,\"scope\":\"$VCI_SCOPE\",\"consent_required\":true")"
 emit_client vci "$VCI_JSON"
 emit_client vci2 "$VCI2_JSON"
 echo "private_jwks(vci)=$VCI_PRIV1" >> "$SEED_OUT"

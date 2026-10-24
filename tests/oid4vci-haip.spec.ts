@@ -23,7 +23,7 @@
 // FAILED/SKIPPED/INTERRUPTED, zero warnings.
 
 import { test, expect } from '@playwright/test';
-import { SuiteApi, ACCEPTABLE, standardBrowserAutomation, type SuiteTestConfig } from '../fixtures/suite.js';
+import { SuiteApi, ACCEPTABLE, standardBrowserAutomation, browserAutomationFor, type SuiteTestConfig } from '../fixtures/suite.js';
 import { runModule, planResults } from '../fixtures/runner.js';
 import { certDiscoveryUrl, certAuthHost, CONFORMANCE_ALIAS, resultsDir, CERT_USER } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
@@ -188,14 +188,11 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal, zero-warning g
     }
     for (const modEntry of (await suiteApi.getPlan(planId)).modules) {
       const m = modEntry;
-      // The HAIP plan template ships unrelated FAPI2 profile modules
-      // alongside the OID4VCI family - outside this cell's scope (the
-      // fapi2-security.spec.ts cell owns them; they 401/conflict under
-      // the vci_haip profile). Filter by family prefix.
-      if (!m.testModule.startsWith('oid4vci')) {
-        logStep(`SKIP-FAMILY ${m.testModule}`);
-        continue;
-      }
+      // The HAIP plan ships the full FAPI2-client module family under
+      // fapi_profile=vci_haip - they belong to THIS cell (the plan-level
+      // gate requires every entry terminal); only oid4vci entries carry a
+      // vci_credential_encryption axis and the metadata modules lock
+      // fapi_request_method.
       if (onlyList.length > 0 && !onlyList.includes(m.testModule)) {
         logStep(`SKIP-ONLY ${m.testModule}`);
         continue;
@@ -204,8 +201,10 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal, zero-warning g
         logStep(`SKIP ${m.testModule} (already ${m.result})`);
         continue;
       }
+      // Per-module browser automation: the user-rejects family needs the
+      // DENY flow (consent/login cancel) exactly like the FAPI2 cells.
       const run = await runModule(suiteApi, browser, planId, m.testModule,
-        { ...config, browser: harnessBrowserBlock }, 600_000, moduleVariants.get(m.testModule));
+        { ...config, browser: browserAutomationFor(m.testModule) }, 600_000, moduleVariants.get(m.testModule));
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
       expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
       if (run.warnings.length > 0) {

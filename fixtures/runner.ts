@@ -205,7 +205,28 @@ export async function runModule(
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
   try {
-    return await runModuleOnPage(suiteApi, page, planId, module, config, timeoutMs, moduleVariant);
+    const first = await runModuleOnPage(suiteApi, page, planId, module, config, timeoutMs, moduleVariant);
+    // INTERRUPTED is infra noise (a mid-journey TLS blip kills the JVM's
+    // outbound handshake), not a protocol verdict - ONE fresh-context
+    // rerun before the spec gate sees it.
+    if (first.status !== 'INTERRUPTED' && first.result !== 'INTERRUPTED') {
+      return first;
+    }
+    logStep(`  ${module} INTERRUPTED (transient) - one fresh-context rerun`);
+    await ctx.close().catch(() => {});
+    // Let the transient window (a brief listener-refusal blip) heal
+    // before the rerun - an immediate retry lands in the same dead
+    // window (run40's happy-flow rerun hit 'Connection refused' 8s
+    // after the first INTERRUPTED).
+    await page.waitForTimeout(10_000);
+    const ctx2 = await browser.newContext({ ignoreHTTPSErrors: true });
+    const page2 = await ctx2.newPage();
+    try {
+      const second = await runModuleOnPage(suiteApi, page2, planId, module, config, timeoutMs, moduleVariant);
+      return second;
+    } finally {
+      await ctx2.close().catch(() => {});
+    }
   } finally {
     await ctx.close().catch(() => {});
   }
@@ -359,6 +380,20 @@ async function runModuleOnPage(
       for (const e of log) {
         const ph = e?.upload;
         if (typeof ph === 'string' && ph && !uploaded.has(ph)) {
+          // ERROR-PAGE placeholders (the suite's "upload a screenshot of
+          // the error page" class - Expect*ErrorPage conditions) resolve
+          // ONLY through the real browser landing: our server's reject
+          // redirects land on the suite callback with `error=`, which
+          // resumes the module and turns it PASSED
+          // (EnsureInvalidRequestError). A blanket upload would close the
+          // placeholder WITHOUT the error ever being shown - the module
+          // terminalizes as a hollow REVIEW. Login/consent screenshot
+          // confirmations (the non-error class) keep the blanket upload.
+          const msg = String(e?.msg ?? '');
+          if (/error page/i.test(msg)) {
+            logStep(`  error-page placeholder NOT auto-uploaded (${ph}) - the real browser landing resolves it`);
+            continue;
+          }
           uploaded.add(ph);
           try {
             await suiteApi.uploadImage(runnerId, ph, SCREENSHOT_PNG_DATA_URI);
