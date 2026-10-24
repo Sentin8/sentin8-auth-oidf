@@ -1,4 +1,8 @@
 # sentin8-auth-oidf
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../../LICENSE)
+[![Built with TypeScript](https://img.shields.io/badge/Built%20with-TypeScript-blue.svg)](https://www.typescriptlang.org/)
+[![Docs](https://img.shields.io/badge/docs/read-3aa757.svg)](https://sentin8.dev/docs/services/auth-oidf)
+[![Website](https://img.shields.io/badge/website-sentin8.dev-1a73e8.svg)](https://sentin8.dev)
 
 Automated OIDF conformance runs for Sentin8:Auth. Where `sentin8-e2e`
 tests the platform's own surfaces, this repo drives the
