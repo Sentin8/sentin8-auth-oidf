@@ -312,6 +312,8 @@ if pub is None:
 x = int.from_bytes(base64.urlsafe_b64decode(pub["x"] + "=="), "big")
 y = int.from_bytes(base64.urlsafe_b64decode(pub["y"] + "=="), "big")
 pk = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1()).public_key()
+x_b64 = base64.urlsafe_b64encode(x.to_bytes(32, "big")).rstrip(b"=").decode()
+y_b64 = base64.urlsafe_b64encode(y.to_bytes(32, "big")).rstrip(b"=").decode()
 
 ca_key = ec.generate_private_key(ec.SECP256R1())
 now = datetime.datetime.now(datetime.timezone.utc)
@@ -335,6 +337,9 @@ leaf = (x509.CertificateBuilder()
 print(json.dumps({
   "leaf_der_b64": base64.b64encode(leaf.public_bytes(serialization.Encoding.DER)).decode(),
   "ca_pem": ca.public_bytes(serialization.Encoding.PEM).decode(),
+  "x": x_b64,
+  "y": y_b64,
+  "kid": pub["kid"],
 }))
 PYGENHAIP
 )"
@@ -354,6 +359,8 @@ PYHAIPPEM
   HAIP_CHAIN_JSON="$(printf '%s' "$HAIP_CA_PEM" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
   ATTESTATION_FIELDS="${ATTESTATION_FIELDS},\"issuance_leaf_pem\":${HAIP_LEAF_JSON},\"issuance_chain_pem\":${HAIP_CHAIN_JSON}"
   HAIP_CA_PEM_EXPORTED="$HAIP_CA_PEM"
+  HAIP_LEAF_DER_B64_EXPORTED="$HAIP_LEAF_DER_B64"
+  HAIP_ISSUER_XY_EXPORTED="$(echo "$HAIP_ISSUANCE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['kid'], d['x'], d['y'])")"
 fi
 ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
     \"scope\":\"env\",
@@ -478,6 +485,8 @@ echo "private_jwks(vciatt)=$VCIATT_PRIV" >> "$SEED_OUT"
 echo "public_jwks(vciatt)=$VCIATT_PUB" >> "$SEED_OUT"
 echo "attester_pem(vciatt)=$VCIATT_PEM" >> "$SEED_OUT"
 [ -n "${HAIP_CA_PEM_EXPORTED:-}" ] && echo "haip_issuer_ca_pem(haip)=$HAIP_CA_PEM_EXPORTED" >> "$SEED_OUT"
+[ -n "${HAIP_LEAF_DER_B64_EXPORTED:-}" ] && echo "haip_issuer_leaf_der_b64(haip)=$HAIP_LEAF_DER_B64_EXPORTED" >> "$SEED_OUT"
+[ -n "${HAIP_ISSUER_XY_EXPORTED:-}" ] && echo "haip_issuer_xy(haip)=$HAIP_ISSUER_XY_EXPORTED" >> "$SEED_OUT"
 echo "attestation_issuer(vciatt)=https://vci-attester.conformance-local" >> "$SEED_OUT"
 emit_client() { # emit_client <name> <json>
   echo "client_id($1)=$(jget "$2" client_id)" | tee -a "$SEED_OUT"
@@ -545,7 +554,7 @@ VCI_PUB1=$(echo "$VCI_KEYS" | python3 -c "import json,sys; print(json.dumps(json
 VCI_PUB2=$(echo "$VCI_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['pub2']))")
 VCI_PRIV1=$(echo "$VCI_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['p1']))")
 VCI_PRIV2=$(echo "$VCI_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['p2']))")
-VCI_SCOPE='openid profile email offline_access credential:VerifiedPersonCredential credential:VerifiedEmployeeCredential'
+VCI_SCOPE='openid profile email offline_access credential:VerifiedPersonCredential credential:VerifiedEmployeeCredential eudi.pid.1 eudi.pid.1.nobinding eudi.pid.1.attestation eudi.pid.1.jwt.keyattest eudi.pid.1.attestation.keyattest eudi.pid.1.jwt_and_attestation.keyattest openid.example.cert.1'
 VCI_JSON="$(dcr "cert-vci" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$VCI_PUB1,\"scope\":\"$VCI_SCOPE\"")"
 VCI2_JSON="$(dcr "cert-vci-2" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$VCI_PUB2,\"scope\":\"$VCI_SCOPE\"")"
 emit_client vci "$VCI_JSON"
