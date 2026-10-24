@@ -27,6 +27,9 @@ export interface SuiteModule {
   status: string | null;
   instances: string[];
   testSummary?: string;
+  /** The module's resolved variant values (the HAIP-class plans
+   * resolve some axes server-side; the runner create needs the rest). */
+  variant?: Record<string, string>;
 }
 
 export interface SuitePlan {
@@ -340,11 +343,19 @@ export class SuiteApi {
     return { id: parsed._id ?? parsed.id, planName, modules: parsed.modules ?? [] };
   }
 
-  /** Create + auto-start a test module within a plan. Returns its id. */
-  async createTest(planId: string, testModule: string): Promise<string> {
+  /** Create + auto-start a test module within a plan. Returns its id.
+   * `variant` (optional) rides the query param - the HAIP-class plans
+   * leave per-module axes user-selected and resolve the rest server-side
+   * from the plan; POSTing a JSON BODY to this endpoint answers 400.
+   */
+  async createTest(planId: string, testModule: string, variant?: Record<string, string>): Promise<string> {
     await this.ensureCookie();
+    const qs = new URLSearchParams({ test: testModule, plan: planId });
+    if (variant && Object.keys(variant).length > 0) {
+      qs.set('variant', JSON.stringify(variant));
+    }
     const res = await fetch(
-      `${SUITE_BASE}/api/runner?test=${encodeURIComponent(testModule)}&plan=${encodeURIComponent(planId)}`,
+      `${SUITE_BASE}/api/runner?${qs}`,
       {
         method: 'POST',
         headers: {

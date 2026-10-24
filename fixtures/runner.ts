@@ -199,12 +199,13 @@ export async function runModule(
   module: string,
   config: SuiteTestConfig & { browser?: BrowserAutomationEntry[] },
   timeoutMs = 600_000,
+  moduleVariant?: Record<string, string>,
 ): Promise<ModuleRun> {
   // Fresh context per module (cookies/storage NEVER leak between tests).
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
   try {
-    return await runModuleOnPage(suiteApi, page, planId, module, config, timeoutMs);
+    return await runModuleOnPage(suiteApi, page, planId, module, config, timeoutMs, moduleVariant);
   } finally {
     await ctx.close().catch(() => {});
   }
@@ -218,6 +219,7 @@ async function runModuleOnPage(
   module: string,
   config: SuiteTestConfig & { browser?: BrowserAutomationEntry[] },
   timeoutMs: number,
+  moduleVariant?: Record<string, string>,
 ): Promise<ModuleRun> {
   const t0 = Date.now();
   // The suite serializes per-alias: the PREVIOUS module's alias release
@@ -226,12 +228,12 @@ async function runModuleOnPage(
   // settle gap.
   let runnerId: string;
   try {
-    runnerId = await suiteApi.createTest(planId, module);
+    runnerId = await suiteApi.createTest(planId, module, moduleVariant);
   } catch (e) {
     const msg = String((e as Error).message);
     if (!msg.includes('alias') && !msg.includes('conflict')) throw e;
     await page.waitForTimeout(8_000);
-    runnerId = await suiteApi.createTest(planId, module);
+    runnerId = await suiteApi.createTest(planId, module, moduleVariant);
   }
   logStep(`RUN ${module} → ${runnerId}`);
 

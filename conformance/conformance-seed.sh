@@ -173,7 +173,7 @@ case "$PROFILE" in
   fapi_*) CONSENT_REQUIRED="true";;
 esac
 case "$PROFILE" in
-  fapi_2|fapi_2_message_signing|fapi_ciba|vci) ALG="ES256";;
+  fapi_2|fapi_2_message_signing|fapi_ciba|vci|vci_haip) ALG="ES256";;
 esac
 log "setting env security profile to $PROFILE"
 # Per-profile flag posture (auth DESIGN §9a.5/§9a.3; OC-13): the flags
@@ -201,6 +201,14 @@ case "$PROFILE" in
     # parses a standard code redirect), no mTLS (private_key_jwt +
     # dpop-only sender constraint).
     FLAGS='"require_par":true,"require_jarm":false,"require_dpop":false,"require_iss":true,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
+  vci_haip)
+    # OID4VCI HAIP cells: the vci posture PLUS attestation-based client
+    # authentication (draft-ietf-oauth-attestation-based-client-auth;
+    # auth DESIGN §9a.19). The allow flag + the trust anchor (the
+    # attester's self-signed leaf PEM) + the expected attestation iss
+    # ride the profile row - discovery then advertises
+    # attest_jwt_client_auth and the attestation alg lists.
+    FLAGS='"require_par":true,"require_jarm":false,"require_dpop":false,"require_iss":true,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
   *)
     FLAGS='"require_par":false,"require_jarm":false,"require_dpop":false,"require_iss":false,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
 esac
@@ -212,6 +220,61 @@ case "$PROFILE" in
   fapi_2|fapi_2_message_signing) ROTATION="false";;
   *) ROTATION="true";;
 esac
+# OID4VCI key-ATTESTATION issuer key (the rig plays the attester): the
+# suite signs key-attestation+jwt with this key and the plan config
+# publishes its PUBLIC JWKS as vci_key_attestation_jwks (the trusted
+# attester set). The private form goes to seed-out for the harness.
+VCIATT_KEYS="$(python3 - <<'PYGENVCIATT'
+import base64, datetime, json
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.x509.oid import NameOID
+
+key = ec.generate_private_key(ec.SECP256R1())
+pub = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+x = base64.urlsafe_b64encode(pub[1:33]).rstrip(b'=').decode()
+y = base64.urlsafe_b64encode(pub[33:65]).rstrip(b'=').decode()
+d = key.private_numbers().private_value.to_bytes(32, 'big')
+d_b64 = base64.urlsafe_b64encode(d).rstrip(b'=').decode()
+kid = 'vci-attester-key'
+# The attestation signer key needs an x5c chain (VCIGenerateKeyAttestation:
+# "A x5c entry is required in the client's signing key"). Self-issue a
+# leaf certificate for the attester and embed the DER chain base64.
+name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'vci-attester.conformance-local.local.sentin8.dev')])
+now = datetime.datetime.now(datetime.timezone.utc)
+cert = (x509.CertificateBuilder()
+        .subject_name(name).issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=3650))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .sign(key, hashes.SHA256()))
+x5c = [base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode()]
+leaf_pem = cert.public_bytes(serialization.Encoding.PEM).decode()
+private = {"kty": "EC", "kid": kid, "crv": "P-256", "x": x, "y": y, "d": d_b64, "alg": "ES256", "x5c": x5c}
+public = {"keys": [{"kty": "EC", "kid": kid, "use": "sig", "alg": "ES256", "crv": "P-256", "x": x, "y": y, "x5c": x5c}]}
+print(json.dumps({"private": private, "public": public, "leaf_pem": leaf_pem}))
+PYGENVCIATT
+)"
+VCIATT_PRIV=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['private']))")
+VCIATT_PUB=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['public']))")
+VCIATT_PEM=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('leaf_pem','').rstrip())")
+
+# Attestation profile fields (vci_haip only): the trust anchor PEM
+# (attester self-signed leaf) + the expected attestation iss ride the
+# security profile row (auth DESIGN 9a.19); empty otherwise.
+ATTESTATION_FIELDS=""
+ATTESTATION_JSON_ANCHOR=""
+if [ "$PROFILE" == "vci_haip" ]; then
+  ATTESTATION_ANCHOR="$VCIATT_PEM"
+  ATTESTATION_ISSUER="https://vci-attester.conformance-local"
+  ATTESTATION_JSON_ANCHOR="$(printf '%s' "$ATTESTATION_ANCHOR" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
+  ATTESTATION_ISSUER_JSON="$(printf '%s' "$ATTESTATION_ISSUER" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
+  ATTESTATION_FIELDS=",\"allow_client_attestation\":true,\"client_attestation_trust_anchor_pem\":$ATTESTATION_JSON_ANCHOR,\"client_attestation_issuer\":$ATTESTATION_ISSUER_JSON"
+fi
 ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
     \"scope\":\"env\",
     \"org_id\":\"$ORG_ID\",
@@ -221,6 +284,7 @@ ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
     \"require_pkce\":true,
     \"signing_alg\":\"$ALG\",
     \"refresh_rotation\":$ROTATION
+    $ATTESTATION_FIELDS
   }" >/dev/null && log "profile=$PROFILE set ({$FLAGS}, $ALG, rotation=$ROTATION)"
 
 # ── 3. Certification user (idempotent sign-up in the CERT tenant) ──
@@ -330,11 +394,14 @@ CIBA_JSON="$(dcr "cert-ciba" "\"grant_types\":[\"urn:openid:params:grant-type:ci
 # the OIDF automation harness reads it for the suite plan configs).
 SEED_OUT="$TMP/seed-out.txt"
 : > "$SEED_OUT"
+echo "private_jwks(vciatt)=$VCIATT_PRIV" >> "$SEED_OUT"
+echo "public_jwks(vciatt)=$VCIATT_PUB" >> "$SEED_OUT"
+echo "attester_pem(vciatt)=$VCIATT_PEM" >> "$SEED_OUT"
+echo "attestation_issuer(vciatt)=https://vci-attester.conformance-local" >> "$SEED_OUT"
 emit_client() { # emit_client <name> <json>
   echo "client_id($1)=$(jget "$2" client_id)" | tee -a "$SEED_OUT"
   echo "client_secret($1)=$(jget "$2" client_secret)" | tee -a "$SEED_OUT"
 }
-echo "private_jwks(ciba)=$CIBA_PRIV" >> /dev/null 2>&1 || true
 # CIBA second client - the suite's AbstractFAPICIBAID1MultipleClient
 # family (signed-by-other-client / bad-iss / multiple hints) drives a
 # SECOND registered client: a distinct id + its OWN keypair (the
@@ -405,47 +472,7 @@ emit_client vci2 "$VCI2_JSON"
 echo "private_jwks(vci)=$VCI_PRIV1" >> "$SEED_OUT"
 echo "private_jwks(vci2)=$VCI_PRIV2" >> "$SEED_OUT"
 
-# OID4VCI key-ATTESTATION issuer key (the rig plays the attester): the
-# suite signs key-attestation+jwt with this key and the plan config
-# publishes its PUBLIC JWKS as vci_key_attestation_jwks (the trusted
-# attester set). The private form goes to seed-out for the harness.
-VCIATT_KEYS="$(python3 - <<'PYGENVCIATT'
-import base64, datetime, json
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import NameOID
 
-key = ec.generate_private_key(ec.SECP256R1())
-pub = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
-x = base64.urlsafe_b64encode(pub[1:33]).rstrip(b'=').decode()
-y = base64.urlsafe_b64encode(pub[33:65]).rstrip(b'=').decode()
-d = key.private_numbers().private_value.to_bytes(32, 'big')
-d_b64 = base64.urlsafe_b64encode(d).rstrip(b'=').decode()
-kid = 'vci-attester-key'
-# The attestation signer key needs an x5c chain (VCIGenerateKeyAttestation:
-# "A x5c entry is required in the client's signing key"). Self-issue a
-# leaf certificate for the attester and embed the DER chain base64.
-name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'vci-attester.conformance-local.local.sentin8.dev')])
-now = datetime.datetime.now(datetime.timezone.utc)
-cert = (x509.CertificateBuilder()
-        .subject_name(name).issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - datetime.timedelta(days=1))
-        .not_valid_after(now + datetime.timedelta(days=3650))
-        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-        .sign(key, hashes.SHA256()))
-x5c = [base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode()]
-private = {"kty": "EC", "kid": kid, "crv": "P-256", "x": x, "y": y, "d": d_b64, "alg": "ES256", "x5c": x5c}
-public = {"keys": [{"kty": "EC", "kid": kid, "use": "sig", "alg": "ES256", "crv": "P-256", "x": x, "y": y, "x5c": x5c}]}
-print(json.dumps({"private": private, "public": public}))
-PYGENVCIATT
-)"
-VCIATT_PRIV=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['private']))")
-VCIATT_PUB=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['public']))")
-echo "private_jwks(vciatt)=$VCIATT_PRIV" >> "$SEED_OUT"
-echo "public_jwks(vciatt)=$VCIATT_PUB" >> "$SEED_OUT"
 echo "private_jwks(ciba)=$CIBA_PRIV" >> "$SEED_OUT"
 echo "private_jwks(ciba2)=$CIBA2_PRIV" >> "$SEED_OUT"
 echo "org_id=$ORG_ID" >> "$SEED_OUT"
