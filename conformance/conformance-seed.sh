@@ -164,6 +164,7 @@ log "org=$ORG_ID env=$ENV_ID"
 # client). Override per run via CONFORMANCE_PROFILE for the FAPI
 # plans (fapi_2 / fapi_1_advanced / fapi_ciba - see README §4).
 PROFILE="${CONFORMANCE_PROFILE:-standard}"
+CERT_AUTH_HOST="https://auth.cert.conformance-local.local.sentin8.dev"
 # ID-token/DPoP signing family for the run - FAPI 2.0 SP (FAPI2-SP-FINAL 5.4-1) admits PS256/ES256/EdDSA/Ed25519; the platform families are MLDSA65/RS256/ES256 -> ES256 for FAPI runs.
 ALG="${CONFORMANCE_SIGNING_ALG:-RS256}"
 # The user-rejects modules reach the consent screen's Deny ONLY when
@@ -267,6 +268,7 @@ VCIATT_PEM=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.load(
 # (attester self-signed leaf) + the expected attestation iss ride the
 # security profile row (auth DESIGN 9a.19); empty otherwise.
 ATTESTATION_FIELDS=""
+ATTESTATION_FIELDS_BASE=""
 ATTESTATION_JSON_ANCHOR=""
 if [ "$PROFILE" == "vci_haip" ]; then
   ATTESTATION_ANCHOR="$VCIATT_PEM"
@@ -274,6 +276,84 @@ if [ "$PROFILE" == "vci_haip" ]; then
   ATTESTATION_JSON_ANCHOR="$(printf '%s' "$ATTESTATION_ANCHOR" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
   ATTESTATION_ISSUER_JSON="$(printf '%s' "$ATTESTATION_ISSUER" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
   ATTESTATION_FIELDS=",\"allow_client_attestation\":true,\"client_attestation_trust_anchor_pem\":$ATTESTATION_JSON_ANCHOR,\"client_attestation_issuer\":$ATTESTATION_ISSUER_JSON"
+  # Pass 1: PUT the vci_haip profile (no issuance material yet) so the
+  # cert-host JWKS resolves the ES256 family (the tenant-plane filter).
+  ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
+    \"scope\":\"env\",
+    \"org_id\":\"$ORG_ID\",
+    \"env_id\":\"$ENV_ID\",
+    \"profile\":\"$PROFILE\",
+    $FLAGS,
+    \"require_pkce\":true,
+    \"signing_alg\":\"$ALG\",
+    \"refresh_rotation\":$ROTATION
+    $ATTESTATION_FIELDS_BASE
+  }" >/dev/null || true
+  # HAIP issuance chain (the credential/status x5c): the rig's
+  # issuance CA signs a LEAF on the ISSUER's ES256 public key (read
+  # from the live JWKS). The profile carries leaf (std-b64 DER) + CA
+  # (PEM); the harness pins the SAME CA as the credential/status trust
+  # anchor. The issuer never holds the CA key.
+  HAIP_JWKS="$(curl -sk "$CERT_AUTH_HOST/.well-known/jwks.json")"
+  HAIP_ISSUANCE_JSON="$(export HAIP_JWKS HAIP_ISSUER_URL="$CERT_AUTH_HOST"; python3 <<'PYGENHAIP'
+import os, json, base64, datetime
+import cryptography.hazmat.primitives.asymmetric.ec as ec
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.x509.oid import NameOID
+
+issuer_url = os.environ["HAIP_ISSUER_URL"]
+d = json.loads(os.environ["HAIP_JWKS"])
+import sys
+pub = next((k for k in d.get("keys", [])
+            if k.get("alg") == "ES256" and k.get("use") == "sig"), None)
+if pub is None:
+    sys.exit(0)
+x = int.from_bytes(base64.urlsafe_b64decode(pub["x"] + "=="), "big")
+y = int.from_bytes(base64.urlsafe_b64decode(pub["y"] + "=="), "big")
+pk = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1()).public_key()
+
+ca_key = ec.generate_private_key(ec.SECP256R1())
+now = datetime.datetime.now(datetime.timezone.utc)
+ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "sentin8-haip-issuance-ca")])
+ca = (x509.CertificateBuilder()
+      .subject_name(ca_name).issuer_name(ca_name)
+      .public_key(ca_key.public_key())
+      .serial_number(x509.random_serial_number())
+      .not_valid_before(now - datetime.timedelta(days=1))
+      .not_valid_after(now + datetime.timedelta(days=3650))
+      .add_extension(x509.BasicConstraints(ca=True, path_length=1), critical=True)
+      .sign(ca_key, hashes.SHA256()))
+leaf_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer_url)])
+leaf = (x509.CertificateBuilder()
+        .subject_name(leaf_name).issuer_name(ca_name)
+        .public_key(pk)
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=3650))
+        .sign(ca_key, hashes.SHA256()))
+print(json.dumps({
+  "leaf_der_b64": base64.b64encode(leaf.public_bytes(serialization.Encoding.DER)).decode(),
+  "ca_pem": ca.public_bytes(serialization.Encoding.PEM).decode(),
+}))
+PYGENHAIP
+)"
+  HAIP_LEAF_DER_B64="$(echo "$HAIP_ISSUANCE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['leaf_der_b64'])")"
+  HAIP_CA_PEM="$(echo "$HAIP_ISSUANCE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['ca_pem'])")"
+  # x5c leaf PEM for the seed-out + the profile JSON fields.
+  HAIP_LEAF_PEM="$(python3 - "$HAIP_LEAF_DER_B64" <<'PYHAIPPEM'
+import sys, base64
+b64 = base64.b64encode(base64.b64decode(sys.argv[1])).decode()
+print("-----BEGIN CERTIFICATE-----")
+for i in range(0, len(b64), 64):
+    print(b64[i:i+64])
+print("-----END CERTIFICATE-----")
+PYHAIPPEM
+)"
+  HAIP_LEAF_JSON="$(printf '%s' "$HAIP_LEAF_PEM" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
+  HAIP_CHAIN_JSON="$(printf '%s' "$HAIP_CA_PEM" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
+  ATTESTATION_FIELDS="${ATTESTATION_FIELDS},\"issuance_leaf_pem\":${HAIP_LEAF_JSON},\"issuance_chain_pem\":${HAIP_CHAIN_JSON}"
+  HAIP_CA_PEM_EXPORTED="$HAIP_CA_PEM"
 fi
 ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
     \"scope\":\"env\",
@@ -285,7 +365,7 @@ ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
     \"signing_alg\":\"$ALG\",
     \"refresh_rotation\":$ROTATION
     $ATTESTATION_FIELDS
-  }" >/dev/null && log "profile=$PROFILE set ({$FLAGS}, $ALG, rotation=$ROTATION)"
+  }" && log "profile=$PROFILE set ({$FLAGS}, $ALG, rotation=$ROTATION)"
 
 # ── 3. Certification user (idempotent sign-up in the CERT tenant) ──
 # The suite drives the user's sign-in through the browser UI; the
@@ -397,6 +477,7 @@ SEED_OUT="$TMP/seed-out.txt"
 echo "private_jwks(vciatt)=$VCIATT_PRIV" >> "$SEED_OUT"
 echo "public_jwks(vciatt)=$VCIATT_PUB" >> "$SEED_OUT"
 echo "attester_pem(vciatt)=$VCIATT_PEM" >> "$SEED_OUT"
+[ -n "${HAIP_CA_PEM_EXPORTED:-}" ] && echo "haip_issuer_ca_pem(haip)=$HAIP_CA_PEM_EXPORTED" >> "$SEED_OUT"
 echo "attestation_issuer(vciatt)=https://vci-attester.conformance-local" >> "$SEED_OUT"
 emit_client() { # emit_client <name> <json>
   echo "client_id($1)=$(jget "$2" client_id)" | tee -a "$SEED_OUT"

@@ -36,7 +36,7 @@ type VciClient = any;
 
 const ATTESTATION_ISSUER = 'https://vci-attester.conformance-local';
 
-function seededHaipClients(): { client: VciClient; client2: VciClient; attesterJwks: unknown; anchorPem: string } {
+function seededHaipClients(): { client: VciClient; client2: VciClient; attesterJwks: unknown; anchorPem: string; issuerCertPem: string } {
   const seedOut = process.env.OIDF_SEED_OUT
     ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
   const fallback = (id: string): VciClient => ({
@@ -48,7 +48,7 @@ function seededHaipClients(): { client: VciClient; client2: VciClient; attesterJ
     hint_value: CERT_USER.email,
   });
   if (!existsSync(seedOut)) {
-    return { client: fallback(''), client2: fallback(''), attesterJwks: null, anchorPem: '' };
+    return { client: fallback(''), client2: fallback(''), attesterJwks: null, anchorPem: '', issuerCertPem: '' };
   }
   const text = readFileSync(seedOut, 'utf8');
   // The attester PRIVATE jwks (with `d`) signs BOTH the key-attestation
@@ -58,6 +58,15 @@ function seededHaipClients(): { client: VciClient; client2: VciClient; attesterJ
   // anchor_pem) pins the same leaf.
   const attJwksLine = text.match(/private_jwks\(vciatt\)=(\{.*\})/)?.[1] ?? '';
   const anchorPem = text.match(/attester_pem\(vciatt\)=([\s\S]*?-----END CERTIFICATE-----)/)?.[1] ?? '';
+  // HAIP credential/status trust anchor: the ISSUER's self-issued
+  // ES256 certificate (the x5c chain the issuer stamps on its
+  // credentials + status-list tokens) - preferred over the attester
+  // leaf when present, since the HAIP checks require the credential
+  // and status-list chains to anchor there.
+  const issuerPem = text.match(/issuer_cert_pem\(auth\)=([\s\S]*?-----END CERTIFICATE-----)/)?.[1] ?? '';
+  // The HAIP issuance CA (the rig-minted chain root the profile's
+  // issuance leaf chains to) - the credential/status trust anchor.
+  const haipCaPem = text.match(/haip_issuer_ca_pem\(haip\)=([\s\S]*?-----END CERTIFICATE-----)/)?.[1] ?? '';
   let attesterJwks: unknown = null;
   try {
     const parsed = attJwksLine ? JSON.parse(attJwksLine) : null;
@@ -90,6 +99,7 @@ function seededHaipClients(): { client: VciClient; client2: VciClient; attesterJ
     client2: mk(cid2 || cid, parse(jwks2Line) ?? parse(jwksLine)),
     attesterJwks,
     anchorPem: anchorPem.trim(),
+    issuerCertPem: haipCaPem.trim() || issuerPem.trim(),
   };
 }
 
@@ -125,8 +135,8 @@ const config: SuiteTestConfig = {
   // status-list trust anchor are the rig's attester leaf (the certificate
   // the issuer mints/under signs its key material with in this cell).
   credential: {
-    trust_anchor_pem: seeded.anchorPem || '',
-    status_list_trust_anchor_pem: seeded.anchorPem || '',
+    trust_anchor_pem: seeded.issuerCertPem || seeded.anchorPem,
+    status_list_trust_anchor_pem: seeded.issuerCertPem || seeded.anchorPem,
   },
   client: seeded.client,
   client2: seeded.client2,
@@ -178,6 +188,14 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal, zero-warning g
     }
     for (const modEntry of (await suiteApi.getPlan(planId)).modules) {
       const m = modEntry;
+      // The HAIP plan template ships unrelated FAPI2 profile modules
+      // alongside the OID4VCI family - outside this cell's scope (the
+      // fapi2-security.spec.ts cell owns them; they 401/conflict under
+      // the vci_haip profile). Filter by family prefix.
+      if (!m.testModule.startsWith('oid4vci')) {
+        logStep(`SKIP-FAMILY ${m.testModule}`);
+        continue;
+      }
       if (onlyList.length > 0 && !onlyList.includes(m.testModule)) {
         logStep(`SKIP-ONLY ${m.testModule}`);
         continue;
