@@ -17,6 +17,7 @@
     "test:fapi2-signing": "playwright test tests/fapi2-message-signing.spec.ts",
     "test:fapi1": "playwright test tests/fapi1-advanced.spec.ts",
     "test:ciba": "playwright test tests/ciba.spec.ts",
+    "test:oid4vci-issuer": "playwright test tests/oid4vci-issuer.spec.ts",
     "lint": "tsc --noEmit",
     "install-browsers": "playwright install chromium"
   },

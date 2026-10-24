@@ -42,6 +42,9 @@ oidc-config: ## OIDC Core Config OP (discovery completeness, warning-zero)
 oidc-dynamic: ## OIDC Core Dynamic OP (RFC 7591 DCR cells, warning-zero)
 	@pnpm run test:dynamic
 
+oid4vci-issuer: ## OID4VCI 1.0 Issuer plan (wallet role = suite, warning-zero)
+	@pnpm run test:oid4vci-issuer
+
 fapi2: ## FAPI 2 Security Profile
 	@pnpm run test:fapi2
 
