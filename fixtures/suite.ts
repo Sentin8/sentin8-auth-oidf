@@ -134,6 +134,17 @@ export function standardBrowserAutomation(): BrowserAutomationEntry[] {
           commands: [['wait', 'id', 'submission_complete', 10]],
         },
         {
+          task: 'Credential Offer Landing',
+          // The offer-landing smoke path (auth DESIGN §9a.20): the harness
+          // opens OUR landing page
+          // ($authHost/oauth/credential-offer?credential_offer=...) - the
+          // goto itself completes the hop; the handler parses the BY-VALUE
+          // offer and 302s into authorize, where the 'Initial Login' task's
+          // regex matches the SPA landing.
+          match: `${authHost}/oauth/credential-offer*`,
+          commands: [],
+        },
+        {
           task: 'Logout Landing',
           // RP-initiated logout (OC-13): the suite's front-channel
           // url is /oauth/logout?id_token_hint=... - a plain GET the
