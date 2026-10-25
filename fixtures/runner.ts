@@ -402,17 +402,27 @@ async function runModuleOnPage(
           const msg = String(e?.msg ?? '');
           if (/error page/i.test(msg)) {
             const pageUrl = page.url();
-            const onCallback = /\/test\/a\//.test(pageUrl);
-            if (onCallback && !landingSeen.has(ph)) {
-              // Redirect-surface reject: the error redirect ALREADY landed
-              // on the suite callback - trust the FIRST landing to resolve
-              // the module; a placeholder still pending on the second
-              // observation means the module demands the screenshot itself
-              // - fall through to the upload below.
-              landingSeen.add(ph);
-              logStep(`  error-page placeholder held (1st landing) (${ph}) - expect the callback landing to resolve it`);
-              continue;
-            }
+              // Our OWN login/consent surfaces are never the module's error
+              // page: the JAR-precedence positives log a CONDITIONAL
+              // 'If the server does not return an invalid_request error ...'
+              // and proceed with the normal SPA journey (object-precedence
+              // path 3). Uploading a screenshot OF THE SIGN-IN PAGE here
+              // closes the module as a hollow REVIEW before the consent/
+              // callback ever complete (f2s run1: 5 modules). Skip while the
+              // page is ours; the landing-seen fallback below still covers
+              // a genuine stall.
+              const onOwnUi = /\/(sign-in|consent)/.test(pageUrl);
+              const onCallback = /\/test\/a\//.test(pageUrl);
+              if (onOwnUi || (onCallback && !landingSeen.has(ph))) {
+                // Redirect-surface reject: the error redirect ALREADY landed
+                // on the suite callback - trust the FIRST landing to resolve
+                // the module; a placeholder still pending on the second
+                // observation means the module demands the screenshot itself
+                // - fall through to the upload below.
+                landingSeen.add(ph);
+                logStep(`  error-page placeholder held (${ph}) from ${pageUrl.slice(0, 70)} - expect the landing/journey to resolve it`);
+                continue;
+              }
             try {
               const buf = await page.screenshot({ timeout: 10_000 });
               const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
