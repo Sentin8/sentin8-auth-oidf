@@ -217,8 +217,10 @@ export async function runModule(
     // Let the transient window (a brief listener-refusal blip) heal
     // before the rerun - an immediate retry lands in the same dead
     // window (run40's happy-flow rerun hit 'Connection refused' 8s
-    // after the first INTERRUPTED).
-    await page.waitForTimeout(10_000);
+    // after the first INTERRUPTED). A plain Node timer: the closed
+    // context's page cannot wait on itself (f2s run1: the LAST module's
+    // rerun crashed the spec with 'Target page ... has been closed').
+    await new Promise<void>((resolve) => setTimeout(resolve, 10_000));
     const ctx2 = await browser.newContext({ ignoreHTTPSErrors: true });
     const page2 = await ctx2.newPage();
     try {
@@ -411,7 +413,19 @@ async function runModuleOnPage(
               // callback ever complete (f2s run1: 5 modules). Skip while the
               // page is ours; the landing-seen fallback below still covers
               // a genuine stall.
-              const onOwnUi = /\/(sign-in|consent)/.test(pageUrl);
+              // Anchor on the URL PATH: the SPA routes via HASHES, and a
+              // '#/consent' fragment on the authorize URL (the consent view
+              // rendered in-flight, or the consent_required QUERY PARAM)
+              // must not classify the page as our own UI - the f2s run2
+              // different-client module's inline 400 error page (class B)
+              // sat on /oauth/authorize and was held forever.
+              let ownPath = '';
+              try {
+                ownPath = new URL(pageUrl).pathname;
+              } catch {
+                ownPath = pageUrl;
+              }
+              const onOwnUi = ownPath === '/sign-in' || ownPath === '/consent';
               const onCallback = /\/test\/a\//.test(pageUrl);
               if (onOwnUi || (onCallback && !landingSeen.has(ph))) {
                 // Redirect-surface reject: the error redirect ALREADY landed
