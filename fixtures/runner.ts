@@ -269,8 +269,12 @@ async function runModuleOnPage(
   let lastDrivenUrl: string | null = null;
   let lastDriveAt = 0;
   let pageOk = true;
-  // Screenshot placeholders satisfied in THIS run (upload once).
+  // Screenshot placeholders satisfied in THIS run (upload once), and
+  // error-page placeholders observed sitting on the suite callback at
+  // least once (the first landing is trusted to resolve the module; a
+  // placeholder still pending on the SECOND observation gets the image).
   const uploaded = new Set<string>();
+  const landingSeen = new Set<string>();
   // CIBA: the OP's out-of-band user approval. The suite only polls the
   // token endpoint; the authentication device = OUR harness. When the
   // runner log shows the backchannel response (auth_req_id), drive the
@@ -381,17 +385,43 @@ async function runModuleOnPage(
         const ph = e?.upload;
         if (typeof ph === 'string' && ph && !uploaded.has(ph)) {
           // ERROR-PAGE placeholders (the suite's "upload a screenshot of
-          // the error page" class - Expect*ErrorPage conditions) resolve
-          // ONLY through the real browser landing: our server's reject
-          // redirects land on the suite callback with `error=`, which
-          // resumes the module and turns it PASSED
-          // (EnsureInvalidRequestError). A blanket upload would close the
-          // placeholder WITHOUT the error ever being shown - the module
-          // terminalizes as a hollow REVIEW. Login/consent screenshot
-          // confirmations (the non-error class) keep the blanket upload.
+          // the error page" class - Expect*ErrorPage conditions): TWO
+          // distinct resolutions.
+          // (A) Redirect-surface rejects (EnsureInvalidRequestError):
+          // our server's reject redirects land on the suite callback with
+          // `error=`, which resumes the module and turns it PASSED - a
+          // blanket upload would close the placeholder WITHOUT the error
+          // ever being shown, so when the browser sits on the callback the
+          // upload is SKIPPED (the landing resolves it).
+          // (B) Inline error-page surfaces (e.g. the dynamic plan's
+          // ensure-redirect-uri module: 'Show an error page saying the
+          // redirect uri is missing from the request'): the AS answers
+          // INLINE (no redirect) - the suite waits for a screenshot of the
+          // SHOWN page. Capture the real screenshot of the landed page and
+          // upload it (the browser has just driven the authorize URL).
           const msg = String(e?.msg ?? '');
           if (/error page/i.test(msg)) {
-            logStep(`  error-page placeholder NOT auto-uploaded (${ph}) - the real browser landing resolves it`);
+            const pageUrl = page.url();
+            const onCallback = /\/test\/a\//.test(pageUrl);
+            if (onCallback && !landingSeen.has(ph)) {
+              // Redirect-surface reject: the error redirect ALREADY landed
+              // on the suite callback - trust the FIRST landing to resolve
+              // the module; a placeholder still pending on the second
+              // observation means the module demands the screenshot itself
+              // - fall through to the upload below.
+              landingSeen.add(ph);
+              logStep(`  error-page placeholder held (1st landing) (${ph}) - expect the callback landing to resolve it`);
+              continue;
+            }
+            try {
+              const buf = await page.screenshot({ timeout: 10_000 });
+              const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
+              await suiteApi.uploadImage(runnerId, ph, dataUri);
+              uploaded.add(ph);
+              logStep(`  uploaded error-page screenshot (${ph}) from ${pageUrl.slice(0, 80)}`);
+            } catch (err) {
+              logStep(`  error-page screenshot failed for ${ph}: ${(err as Error).message.slice(0, 80)}`);
+            }
             continue;
           }
           uploaded.add(ph);
