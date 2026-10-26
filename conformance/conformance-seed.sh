@@ -209,7 +209,7 @@ case "$PROFILE" in
   fapi_*) CONSENT_REQUIRED="true";;
 esac
 case "$PROFILE" in
-  fapi_2|fapi_2_message_signing|fapi_ciba|vci|vci_haip) ALG="ES256";;
+  fapi_2|fapi_2_message_signing|fapi_1_advanced|fapi_ciba|vci|vci_haip) ALG="ES256";;
 esac
 log "setting env security profile to $PROFILE"
 # Per-profile flag posture (auth DESIGN §9a.5/§9a.3; OC-13): the flags

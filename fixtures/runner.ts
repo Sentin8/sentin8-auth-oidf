@@ -123,7 +123,7 @@ async function runBrowserCommands(
           // exponential-ish backoff (rate-limit window is 60s)
           await page.waitForTimeout(Math.min(2_000 * attempt, 15_000));
         }
-        logStep(`  bridge ${fn}: ${ok ? `accepted (attempt ${attempt})` : 'NOT AVAILABLE after retries'}`);
+        logStep(`  bridge ${fn}${fn.includes('SignIn') ? ` as ${args[0] ?? ''}` : ''}: ${ok ? `accepted (attempt ${attempt})` : 'NOT AVAILABLE after retries'}`);
         break;
       }
       default:
