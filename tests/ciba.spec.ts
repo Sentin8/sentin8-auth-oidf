@@ -13,9 +13,7 @@
 import { test, expect } from '@playwright/test';
 import { SuiteApi, standardBrowserAutomation, browserAutomationFor, type SuiteTestConfig } from '../fixtures/suite.js';
 import { runModule, planResults, ACCEPTABLE } from '../fixtures/runner.js';
-import {
-  certDiscoveryUrl, certAuthHost, suiteCallback, suiteCibaNotification, CONFORMANCE_ALIAS, resultsDir, CERT_USER,
-} from '../fixtures/env.js';
+import {certDiscoveryUrl, certAuthHost, suiteCallback, suiteCibaNotification, CONFORMANCE_ALIAS, resultsDir, seedOutPath, certUser } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -35,8 +33,7 @@ const baseConfig = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CibaClient = any;
 function seededCibaClients(): { client: CibaClient; client2: CibaClient } | null {
-  const seedOut = process.env.OIDF_SEED_OUT
-    ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
   const cid = text.match(/client_id\(ciba\)=([a-f0-9]+)/)?.[1];
@@ -63,7 +60,7 @@ function seededCibaClients(): { client: CibaClient; client2: CibaClient } | null
     // consumption URL from (hint_type, login_hint) - our rig
     // authenticates the certification user by EMAIL.
     hint_type: 'login_hint',
-    hint_value: CERT_USER.email,
+    hint_value: certUser().email,
     jwks: { keys: [keys] },
   });
   // TWO DISTINCT clients: the suite's second-configuration family
@@ -87,8 +84,7 @@ const CELLS = [
 // needs `mtls.cert|key|ca` (+ mtls2) in the plan config (the seeded
 // fapi2-mtls client certs, DESIGN 9a.12).
 function seededFapiTlsSections(): { mtls?: { cert: string; key: string; ca?: string }; mtls2?: { cert: string; key: string; ca?: string } } {
-  const seedOut = process.env.OIDF_SEED_OUT
-    ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return {};
   const text = readFileSync(seedOut, 'utf8');
   const certB64 = text.match(/mtls_cert_der_b64\(main\)=([A-Za-z0-9+\/=]+)/)?.[1];

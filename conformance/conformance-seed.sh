@@ -17,8 +17,20 @@
 # Idempotent: re-running skips what already exists.
 #
 # Outputs (for the suite configuration form):
-#   .tmp/conformance/cert-user.env   - test user credentials
+#   .tmp/conformance/seed-out/<env-slug>.txt - per-env seed facts
+#   (.tmp/conformance/seed-out.txt = the env `cert` default, kept for
+#    the single-env flows)
+#   .tmp/conformance/cert-user-<env-slug>.env - test user credentials
 #   stdout                           - org/env ids + client registrations
+#
+# Profile-per-env (DESIGN §9a.2, OC-20): each family seeds its OWN env
+# (env slug + suite alias via CONFORMANCE_ENV_SLUG / CONFORMANCE_ALIAS;
+# defaults = env `cert` + alias `sentin8-local`, the standard family).
+# The env slug must be DNS-ALPHA (lowercase [a-z0-9-]); the suite alias
+# must be URL-path-safe ([a-z0-9-]). One USER EMAIL PER ENV (derive the
+# default from the slug: cert-user@{slug}.conformance-local... - email
+# rate buckets are shared per address, so a shared email would couple
+# the envs' bot-protection state).
 
 set -euo pipefail
 
@@ -42,10 +54,34 @@ if [ -z "$CLI" ]; then
 fi
 
 ALIAS="${CONFORMANCE_ALIAS:-sentin8-local}"
-CALLBACK="https://localhost.emobix.co.uk:8443/test/a/${ALIAS}/callback"
-USER_EMAIL="${CONFORMANCE_USER_EMAIL:-cert-user@conformance-local.local.sentin8.dev}"
-USER_PASSWORD="${CONFORMANCE_USER_PASSWORD:-Certification!2026}"
+ENV_SLUG="${CONFORMANCE_ENV_SLUG:-cert}"
 ORG_SLUG="conformance-local"
+DOMAIN_SUFFIX="local.sentin8.dev"
+# The per-env tenant identity (OC-20): the auth host + the user email
+# derive from the ENV SLUG; the suite callback/alias from the ALIAS.
+ENV_SLUG_ALPHA_OK="$(printf '%s' "$ENV_SLUG" | grep -cE '^[a-z0-9][a-z0-9-]*$' || true)"
+ALIAS_URL_OK="$(printf '%s' "$ALIAS" | grep -cE '^[a-z0-9][a-z0-9-]*$' || true)"
+if [ "$ENV_SLUG_ALPHA_OK" != "1" ] || [ "$ALIAS_URL_OK" != "1" ]; then
+  echo "[conformance-seed] invalid CONFORMANCE_ENV_SLUG ('$ENV_SLUG') or CONFORMANCE_ALIAS ('$ALIAS') - both must match ^[a-z0-9][a-z0-9-]*$" >&2
+  exit 1
+fi
+CALLBACK="https://localhost.emobix.co.uk:8443/test/a/${ALIAS}/callback"
+USER_EMAIL="${CONFORMANCE_USER_EMAIL:-cert-user@${ENV_SLUG}.${ORG_SLUG}.${DOMAIN_SUFFIX}}"
+USER_PASSWORD="${CONFORMANCE_USER_PASSWORD:-Certification!2026}"
+CERT_AUTH_HOST="https://auth.${ENV_SLUG}.${ORG_SLUG}.${DOMAIN_SUFFIX}"
+# Per-env seed-out (OC-20): env `cert` keeps the FLAT legacy paths (the
+# single-env flows + the specs' fallback paths read them); every other
+# env writes into seed-out/<slug>.txt (+ cert-user-<slug>.env).
+if [ "$ENV_SLUG" = "cert" ]; then
+  SEED_OUT="$TMP/seed-out.txt"
+  CERT_USER_ENV="$TMP/cert-user.env"
+  mkdir -p "$TMP"
+else
+  SEED_OUT="$TMP/seed-out/${ENV_SLUG}.txt"
+  CERT_USER_ENV="$TMP/cert-user-${ENV_SLUG}.env"
+  mkdir -p "$TMP/seed-out"
+fi
+: > "$SEED_OUT"
 
 log() { printf '[conformance-seed] %s\n' "$*"; }
 
@@ -140,19 +176,19 @@ else
 fi
 
 # GET /v1/e?org_id=... returns a top-level array of envs.
-ENV_ID="$(by_slug "$(ccall sys GET "/v1/e?org_id=$ORG_ID")" cert id)"
+ENV_ID="$(by_slug "$(ccall sys GET "/v1/e?org_id=$ORG_ID")" "$ENV_SLUG" id)"
 
 if [ -z "$ENV_ID" ]; then
-  log "creating env 'cert' in $ORG_SLUG"
+  log "creating env '$ENV_SLUG' in $ORG_SLUG"
   ENV_JSON="$(ccall sys POST /v1/e \
-    --body "{\"org_id\":\"$ORG_ID\",\"slug\":\"cert\",\"display_name\":\"Certification\"}")"
+    --body "{\"org_id\":\"$ORG_ID\",\"slug\":\"$ENV_SLUG\",\"display_name\":\"Certification - $ENV_SLUG\"}")"
   ENV_ID="$(jget "$ENV_JSON" id)"
   if [ -z "$ENV_ID" ]; then
-    ENV_ID="$(by_slug "$(ccall sys GET "/v1/e?org_id=$ORG_ID")" cert id)"
+    ENV_ID="$(by_slug "$(ccall sys GET "/v1/e?org_id=$ORG_ID")" "$ENV_SLUG" id)"
   fi
   [ -n "$ENV_ID" ] || { log "FAILED: env create returned no id"; exit 1; }
 else
-  log "env 'cert' exists ($ENV_ID)"
+  log "env '$ENV_SLUG' exists ($ENV_ID)"
 fi
 
 log "org=$ORG_ID env=$ENV_ID"
@@ -164,7 +200,6 @@ log "org=$ORG_ID env=$ENV_ID"
 # client). Override per run via CONFORMANCE_PROFILE for the FAPI
 # plans (fapi_2 / fapi_1_advanced / fapi_ciba - see README §4).
 PROFILE="${CONFORMANCE_PROFILE:-standard}"
-CERT_AUTH_HOST="https://auth.cert.conformance-local.local.sentin8.dev"
 # ID-token/DPoP signing family for the run - FAPI 2.0 SP (FAPI2-SP-FINAL 5.4-1) admits PS256/ES256/EdDSA/Ed25519; the platform families are MLDSA65/RS256/ES256 -> ES256 for FAPI runs.
 ALG="${CONFORMANCE_SIGNING_ALG:-RS256}"
 # The user-rejects modules reach the consent screen's Deny ONLY when
@@ -227,8 +262,8 @@ esac
 # suite signs key-attestation+jwt with this key and the plan config
 # publishes its PUBLIC JWKS as vci_key_attestation_jwks (the trusted
 # attester set). The private form goes to seed-out for the harness.
-VCIATT_KEYS="$(python3 - <<'PYGENVCIATT'
-import base64, datetime, json
+VCIATT_KEYS="$(VCIATT_CN="vci-attester${ENV_SLUG:+-$ENV_SLUG}.${ORG_SLUG}.${DOMAIN_SUFFIX}" python3 - <<'PYGENVCIATT'
+import base64, datetime, json, os
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -245,7 +280,7 @@ kid = 'vci-attester-key'
 # The attestation signer key needs an x5c chain (VCIGenerateKeyAttestation:
 # "A x5c entry is required in the client's signing key"). Self-issue a
 # leaf certificate for the attester and embed the DER chain base64.
-name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'vci-attester.conformance-local.local.sentin8.dev')])
+name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, os.environ['VCIATT_CN'])])
 now = datetime.datetime.now(datetime.timezone.utc)
 cert = (x509.CertificateBuilder()
         .subject_name(name).issuer_name(name)
@@ -274,7 +309,15 @@ ATTESTATION_FIELDS_BASE=""
 ATTESTATION_JSON_ANCHOR=""
 if [ "$PROFILE" == "vci_haip" ]; then
   ATTESTATION_ANCHOR="$VCIATT_PEM"
-  ATTESTATION_ISSUER="https://vci-attester.conformance-local"
+  # The attester identity rides the ENV (OC-20): env `cert` keeps the
+  # legacy form (the specs' hardcoded constant); other envs suffix the
+  # slug. The specs read `attestation_issuer(vciatt)` from seed-out -
+  # matching rows override the constant.
+  if [ "$ENV_SLUG" = "cert" ]; then
+    ATTESTATION_ISSUER="https://vci-attester.conformance-local"
+  else
+    ATTESTATION_ISSUER="https://vci-attester-${ENV_SLUG}.conformance-local"
+  fi
   ATTESTATION_JSON_ANCHOR="$(printf '%s' "$ATTESTATION_ANCHOR" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
   ATTESTATION_ISSUER_JSON="$(printf '%s' "$ATTESTATION_ISSUER" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
   ATTESTATION_FIELDS=",\"allow_client_attestation\":true,\"client_attestation_trust_anchor_pem\":$ATTESTATION_JSON_ANCHOR,\"client_attestation_issuer\":$ATTESTATION_ISSUER_JSON"
@@ -376,17 +419,42 @@ ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
     $ATTESTATION_FIELDS
   }" && log "profile=$PROFILE set ({$FLAGS}, $ALG, rotation=$ROTATION)"
 
-# ── 3. Certification user (idempotent sign-up in the CERT tenant) ──
+# ── 2c. TLS warm-up (runbook §5): the suite's Java client makes
+# single-shot fetches with a short socket timeout; a cold auth instance
+# must first fetch the tenant's leaf from Acme on-demand (~100ms when
+# Acme is warm, seconds when its own boot races). One warm-up request
+# lands the cert in the auth instance's resolver BEFORE ANY other call
+# (the sign-up + DCR go to the SAME host - a cold leaf would fail them).
+log "warming TLS cert for $CERT_AUTH_HOST"
+curl -sk -m 20 -o /dev/null --retry 3 --retry-delay 2 \
+  "$CERT_AUTH_HOST/.well-known/openid-configuration" \
+  && log "TLS cert warm"
+
+# ── 3. Certification user (idempotent sign-up in the target TENANT) ──
 # The suite drives the user's sign-in through the browser UI; the
-# sign-up itself provisions into the tenant resolved from the cert
-# env's own auth hostname (the signup path reads the tenant from the
-# hostname, matching browser behavior).
-CERT_AUTH_HOST="https://auth.cert.conformance-local.local.sentin8.dev"
-log "ensuring certification user $USER_EMAIL (cert tenant)"
+# sign-up itself provisions into the tenant resolved from the env's own
+# auth hostname (the signup path reads the tenant from the hostname,
+# matching browser behavior). One user email per env (OC-20).
+log "ensuring certification user $USER_EMAIL ($ENV_SLUG tenant)"
+SUP_RC=0
 "$CLI" signup --sentin8-auth-url "$CERT_AUTH_HOST" \
   --email "$USER_EMAIL" --password "$USER_PASSWORD" \
-  --first-name "Conformance" --last-name "Certification" \
-  || log "sign-up says exists - continuing"
+  --first-name "Conformance" --last-name "Certification" || SUP_RC=$?
+# The 'exists' case continues (409/40x from a prior seed); a CONNECT/
+# transport error (the CLI's 'error sending request' form) = FATAL - a
+# silent continue left envs without a user and the whole family's
+# modules failing later (the cert-ciba seed + 401 chain).
+if [ "$SUP_RC" != "0" ]; then
+  if "$CLI" signup --sentin8-auth-url "$CERT_AUTH_HOST" \
+    --email "$USER_EMAIL" --password "$USER_PASSWORD" \
+    --first-name "Conformance" --last-name "Certification" >/dev/null 2>&1 \
+    || echo "$SUP_RC" | grep -qE '^(4[0-9][0-9]|2)$'; then
+    log "sign-up says exists - continuing"
+  else
+    log "FATAL: cert user sign-up failed (rc=$SUP_RC - not an exists case)"
+    exit 1
+  fi
+fi
 
 # ── 3. Conformance clients (DCR endpoint - same path Dynamic OP runs) ─
 # Registered via DCR so the exact registration surface under test is the
@@ -479,17 +547,16 @@ CIBA_PRIV=$(echo "$CIBA_KEYS" | python3 -c "import json,sys; print(json.dumps(js
 CIBA_PING_URL="${CALLBACK%/callback}/ciba-notification-endpoint"
 CIBA_JSON="$(dcr "cert-ciba" "\"grant_types\":[\"urn:openid:params:grant-type:ciba\",\"refresh_token\"],\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$CIBA_PUB,\"backchannel_client_notification_endpoint\":\"$CIBA_PING_URL\"")"
 
-# Client ids/secrets print AND persist (.tmp/conformance/seed-out.txt -
-# the OIDF automation harness reads it for the suite plan configs).
-SEED_OUT="$TMP/seed-out.txt"
-: > "$SEED_OUT"
+# Client ids/secrets print AND persist (the SEED_OUT path resolved at
+# the env-slug block above - the OIDF automation harness reads it for
+# the suite plan configs).
 echo "private_jwks(vciatt)=$VCIATT_PRIV" >> "$SEED_OUT"
 echo "public_jwks(vciatt)=$VCIATT_PUB" >> "$SEED_OUT"
 echo "attester_pem(vciatt)=$VCIATT_PEM" >> "$SEED_OUT"
 [ -n "${HAIP_CA_PEM_EXPORTED:-}" ] && echo "haip_issuer_ca_pem(haip)=$HAIP_CA_PEM_EXPORTED" >> "$SEED_OUT"
 [ -n "${HAIP_LEAF_DER_B64_EXPORTED:-}" ] && echo "haip_issuer_leaf_der_b64(haip)=$HAIP_LEAF_DER_B64_EXPORTED" >> "$SEED_OUT"
 [ -n "${HAIP_ISSUER_XY_EXPORTED:-}" ] && echo "haip_issuer_xy(haip)=$HAIP_ISSUER_XY_EXPORTED" >> "$SEED_OUT"
-echo "attestation_issuer(vciatt)=https://vci-attester.conformance-local" >> "$SEED_OUT"
+echo "attestation_issuer(vciatt)=${ATTESTATION_ISSUER:-https://vci-attester.conformance-local}" >> "$SEED_OUT"
 emit_client() { # emit_client <name> <json>
   echo "client_id($1)=$(jget "$2" client_id)" | tee -a "$SEED_OUT"
   echo "client_secret($1)=$(jget "$2" client_secret)" | tee -a "$SEED_OUT"
@@ -724,15 +791,6 @@ PYMTLS
   done
 fi
 
-# ── 3a. TLS warm-up (runbook §5): the suite's Java client makes
-# single-shot fetches with a short socket timeout; a cold auth instance
-# must first fetch the tenant's leaf from Acme on-demand (~100ms when
-# Acme is warm, seconds when its own boot races). One warm-up request
-# lands the cert in the auth instance's resolver BEFORE the suite runs.
-log "warming TLS cert for $CERT_AUTH_HOST"
-curl -sk -m 20 -o /dev/null --retry 3 --retry-delay 2 \
-  "$CERT_AUTH_HOST/.well-known/openid-configuration" \
-  && log "TLS cert warm"
 
 # ── 3b. Cert user phone + postal address (no-skip rule, auth DESIGN
 # §9a.10) ── The OIDF scope tests assert claim PRESENCE for the
@@ -781,8 +839,9 @@ else
 fi
 
 # ── 4. Persist the suite configuration inputs ─────────────────────────
-cat > "$TMP/cert-user.env" <<EOF
+cat > "$CERT_USER_ENV" <<EOF
 # OIDF conformance suite - certification tenant inputs (generated)
+CONFORMANCE_ENV_SLUG=$ENV_SLUG
 CONFORMANCE_ALIAS=$ALIAS
 CONFORMANCE_CALLBACK=$CALLBACK
 CONFORMANCE_USER_EMAIL=$USER_EMAIL
@@ -790,6 +849,6 @@ CONFORMANCE_USER_PASSWORD=$USER_PASSWORD
 CONFORMANCE_ORG_ID=$ORG_ID
 CONFORMANCE_ENV_ID=$ENV_ID
 EOF
-chmod 600 "$TMP/cert-user.env"
-log "wrote $TMP/cert-user.env"
+chmod 600 "$CERT_USER_ENV"
+log "wrote $CERT_USER_ENV"
 log "next: open https://localhost.emobix.co.uk:8443/ and create the test plans (runbook §4)"

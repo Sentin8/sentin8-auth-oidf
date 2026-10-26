@@ -9,7 +9,7 @@
 import { test, expect } from '@playwright/test';
 import { SuiteApi, standardBrowserAutomation, type SuiteTestConfig } from '../fixtures/suite.js';
 import { runModule } from '../fixtures/runner.js';
-import { certDiscoveryUrl, suiteCallback, CONFORMANCE_ALIAS, resultsDir } from '../fixtures/env.js';
+import { certDiscoveryUrl, suiteCallback, CONFORMANCE_ALIAS, resultsDir, seedOutPath } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -18,8 +18,7 @@ let suiteApi: SuiteApi;
 let planId: string;
 
 function loadSeededClients(): { basic: string; basicSecret: string; post: string; postSecret: string } {
-  const seedOut = process.env.OIDF_SEED_OUT
-    ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) throw new Error(`no seed-out at ${seedOut} - run make conformance-seed`);
   const text = readFileSync(seedOut, 'utf8');
   const get = (k: string) => text.match(new RegExp(`${k}=([a-f0-9]+)`))?.[1];

@@ -28,7 +28,7 @@
 import type { Page, Browser } from '@playwright/test';
 import { chromium as _chromium } from '@playwright/test';
 import { SuiteApi, ACCEPTABLE, TERMINAL, SCREENSHOT_PNG_DATA_URI, type SuiteTestConfig, type BrowserAutomationEntry } from './suite.js';
-import { certAuthHost, CERT_USER, CONFORMANCE_ALIAS } from './env.js';
+import { certAuthHost, CONFORMANCE_ALIAS } from './env.js';
 import { logStep } from './log.js';
 
 /** One completed module run. */
@@ -517,12 +517,13 @@ async function runModuleOnPage(
         // (interval 5s x3 for api latency).
         await new Promise((r) => setTimeout(r, 9_000));
         try {
-          const { CERT_USER } = await import('./env.js');
+          const { certUser } = await import('./env.js');
+          const user = certUser();
           const base = certAuthBase;
           const signIn = await fetch(`${base}/v1/sign-in`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: CERT_USER.email, password: CERT_USER.password }),
+            body: JSON.stringify({ email: user.email, password: user.password }),
           });
           if (!signIn.ok) {
             logStep(`  CIBA api sign-in failed: ${signIn.status}`);

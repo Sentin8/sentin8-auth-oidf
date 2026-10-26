@@ -79,12 +79,32 @@ export const SUITE_BASE = 'https://localhost.emobix.co.uk:8443';
 
 /**
  * The certification tenant's auth host (DERIVED - no hardcoded domain):
- * the cert org/env slugs are fixed by the seed script
- * (scripts/conformance/conformance-seed.sh): org `conformance-local`,
- * env `cert` → auth.cert.conformance-local.<domain>.
+ * the cert org slug is fixed by the seed script
+ * (conformance/conformance-seed.sh): org `conformance-local`.
+ *
+ * Profile-per-env (DESIGN §9a.2, OC-20): the ENV SLUG + the suite ALIAS
+ * resolve per family - the seed writes CONFORMANCE_ENV_SLUG/
+ * CONFORMANCE_ALIAS into the per-env cert-user-<slug>.env; the campaign
+ * runner exports them (or the runner process reads the per-env file
+ * below). Defaults = env `cert` + alias `sentin8-local` (the standard
+ * family's legacy single-env form).
  */
-export const CERT_ENV_SLUG = 'cert';
 export const CERT_ORG_SLUG = 'conformance-local';
+export const CERT_ENV_SLUG = process.env.CONFORMANCE_ENV_SLUG ?? 'cert';
+export const CONFORMANCE_ALIAS = process.env.CONFORMANCE_ALIAS ?? 'sentin8-local';
+
+/** The seed-out fact file for THIS env (per-env layout; `cert` = flat). */
+export function seedOutPath(envSlug: string = CERT_ENV_SLUG): string {
+  return envSlug === 'cert'
+    ? join(repoRoot(), '.tmp', 'conformance', 'seed-out.txt')
+    : join(repoRoot(), '.tmp', 'conformance', 'seed-out', `${envSlug}.txt`);
+}
+/** The per-env cert-user env file (the campaign wrapper exports it). */
+export function certUserEnvPath(envSlug: string = CERT_ENV_SLUG): string {
+  return envSlug === 'cert'
+    ? join(repoRoot(), '.tmp', 'conformance', 'cert-user.env')
+    : join(repoRoot(), '.tmp', 'conformance', `cert-user-${envSlug}.env`);
+}
 
 export function certAuthHost(): string {
   return `https://auth.${CERT_ENV_SLUG}.${CERT_ORG_SLUG}.${platformDomain()}`;
@@ -94,22 +114,33 @@ export function certDiscoveryUrl(): string {
   return `${certAuthHost()}/.well-known/openid-configuration`;
 }
 
-/** The suite callback (redirect URI) for the alias. */
-export const CONFORMANCE_ALIAS = 'sentin8-local';
-
-export function suiteCallback(): string {
-  return `${SUITE_BASE}/test/a/${CONFORMANCE_ALIAS}/callback`;
+/** The suite callback (redirect URI) for the active alias. */
+export function suiteCallback(alias: string = CONFORMANCE_ALIAS): string {
+  return `${SUITE_BASE}/test/a/${alias}/callback`;
 }
 /** The suite's CIBA ping receiver (auth DESIGN §9a.15): the OP POSTs the
  * ping notification here at approval time; the suite maps it back to the
  * WAITING module by the request's auth_req_id. */
-export function suiteCibaNotification(): string {
-  return `${SUITE_BASE}/test/a/${CONFORMANCE_ALIAS}/ciba-notification-endpoint`;
+export function suiteCibaNotification(alias: string = CONFORMANCE_ALIAS): string {
+  return `${SUITE_BASE}/test/a/${alias}/ciba-notification-endpoint`;
 }
 
 /**
- * The certification test user (provisioned by `make conformance-seed`;
- * overridable for local variants the same way the seed script allows).
+ * The certification test user (per-env - provisioned by the seed into
+ * the active env; the per-env email defaults from the env slug).
+ */
+export function certUser(envSlug: string = CERT_ENV_SLUG): { email: string; password: string } {
+  return {
+    email:
+      process.env.CONFORMANCE_USER_EMAIL ??
+      `cert-user@${envSlug}.${CERT_ORG_SLUG}.${platformDomain()}`,
+    password: process.env.CONFORMANCE_USER_PASSWORD ?? 'Certification!2026',
+  };
+}
+
+/**
+ * The default CERT_USER binding kept for the single-env callers (the
+ * standard family; the per-family specs call `certUser()`).
  */
 export const CERT_USER = {
   email:

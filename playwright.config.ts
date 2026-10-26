@@ -17,8 +17,9 @@ import { defineConfig } from '@playwright/test';
 import { platformDomain } from './fixtures/env.js';
 
 const DOMAIN = platformDomain();
-// Headed by default (owner rule - failures visible); PLAYWRIGHT_HEADLESS=true for CI.
-const HEADLESS = (process.env.PLAYWRIGHT_HEADLESS ?? 'false') === 'true';
+// Headless by default (battery runs are unattended); PLAYWRIGHT_HEADLESS=false
+// for interactive debugging with a visible browser.
+const HEADLESS = (process.env.PLAYWRIGHT_HEADLESS ?? 'true') !== 'false';
 
 export default defineConfig({
   testDir: './tests',

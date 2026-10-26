@@ -16,8 +16,7 @@ import { test, expect } from '@playwright/test';
 import { SuiteApi, standardBrowserAutomation, browserAutomationFor, type SuiteTestConfig, type SuiteClientConfig } from '../fixtures/suite.js';
 import { runModule, planResults, ACCEPTABLE } from '../fixtures/runner.js';
 import {
-  certDiscoveryUrl, certAuthHost, suiteCallback, CONFORMANCE_ALIAS, resultsDir,
-} from '../fixtures/env.js';
+  certDiscoveryUrl, certAuthHost, suiteCallback, CONFORMANCE_ALIAS, resultsDir, seedOutPath } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -38,8 +37,7 @@ const harnessBrowserBlock = standardBrowserAutomation();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FapiClient = any;
 function seededFapi1Clients(): { client: FapiClient; client2: FapiClient } | null {
-  const seedOut = process.env.OIDF_SEED_OUT
-    ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
   const cid = text.match(/client_id\(fapi2-dpop\)=([a-f0-9]+)/)?.[1];
@@ -72,8 +70,7 @@ function seededFapi1Clients(): { client: FapiClient; client2: FapiClient } | nul
 // plan config (the suite's ExtractMTLSCertificatesFromConfiguration).
 // The seeded fapi2-mtls client certs (seed 3d) supply them.
 function seededFapiTlsSections(): { mtls?: { cert: string; key: string; ca?: string }; mtls2?: { cert: string; key: string; ca?: string } } {
-  const seedOut = process.env.OIDF_SEED_OUT
-    ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return {};
   const text = readFileSync(seedOut, 'utf8');
   const certB64 = text.match(/mtls_cert_der_b64\(main\)=([A-Za-z0-9+\/=]+)/)?.[1];

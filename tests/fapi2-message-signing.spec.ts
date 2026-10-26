@@ -13,8 +13,7 @@ import { test, expect } from '@playwright/test';
 import { SuiteApi, standardBrowserAutomation, browserAutomationFor, type SuiteTestConfig } from '../fixtures/suite.js';
 import { runModule, planResults, ACCEPTABLE } from '../fixtures/runner.js';
 import {
-  certDiscoveryUrl, certAuthHost, suiteCallback, CONFORMANCE_ALIAS, resultsDir,
-} from '../fixtures/env.js';
+  certDiscoveryUrl, certAuthHost, suiteCallback, CONFORMANCE_ALIAS, resultsDir, seedOutPath } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,8 +42,7 @@ const harnessBrowserBlock = standardBrowserAutomation();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FapiClient = any;
 function seededFapiClients(cell: string): { client: FapiClient; client2: FapiClient } | null {
-  const seedOut = process.env.OIDF_SEED_OUT
-    ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
   const cid = text.match(new RegExp(`client_id\\(fapi2-${cell}\\)=([a-f0-9]+)`))?.[1];
@@ -83,8 +81,7 @@ function seededFapiClients(cell: string): { client: FapiClient; client2: FapiCli
  * (RFC 8705 self-signed; auth binds `cnf.x5t#S256` at the mint).
  */
 function seededFapiMtlsClients(): { client: FapiClient; client2: FapiClient; mtls?: { cert: string; key: string; ca?: string }; mtls2?: { cert: string; key: string; ca?: string } } | null {
-  const seedOut = process.env.OIDF_SEED_OUT
-    ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
   const cid = text.match(/client_id\(fapi2-mtls\)=([a-f0-9]+)/)?.[1];

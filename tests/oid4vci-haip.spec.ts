@@ -25,7 +25,7 @@
 import { test, expect } from '@playwright/test';
 import { SuiteApi, ACCEPTABLE, standardBrowserAutomation, browserAutomationFor, type SuiteTestConfig } from '../fixtures/suite.js';
 import { runModule, planResults } from '../fixtures/runner.js';
-import { certDiscoveryUrl, certAuthHost, CONFORMANCE_ALIAS, resultsDir, CERT_USER } from '../fixtures/env.js';
+import {certDiscoveryUrl, certAuthHost, CONFORMANCE_ALIAS, resultsDir, seedOutPath, certUser } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,15 +37,14 @@ type VciClient = any;
 const ATTESTATION_ISSUER = 'https://vci-attester.conformance-local';
 
 function seededHaipClients(): { client: VciClient; client2: VciClient; attesterJwks: unknown; anchorPem: string; issuerCertPem: string } {
-  const seedOut = process.env.OIDF_SEED_OUT
-    ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   const fallback = (id: string): VciClient => ({
     client_id: id,
     token_endpoint_auth_method: 'private_key_jwt',
     scope: 'openid profile email offline_access credential:VerifiedPersonCredential credential:VerifiedEmployeeCredential',
     redirect_uri: suiteCallback(),
     hint_type: 'login_hint',
-    hint_value: CERT_USER.email,
+    hint_value: certUser().email,
   });
   if (!existsSync(seedOut)) {
     return { client: fallback(''), client2: fallback(''), attesterJwks: null, anchorPem: '', issuerCertPem: '' };
@@ -91,7 +90,7 @@ function seededHaipClients(): { client: VciClient; client2: VciClient; attesterJ
     scope: 'openid profile email offline_access credential:VerifiedPersonCredential credential:VerifiedEmployeeCredential',
     redirect_uri: suiteCallback(),
     hint_type: 'login_hint',
-    hint_value: CERT_USER.email,
+    hint_value: certUser().email,
     ...(keys ? { jwks: keys } : {}),
   });
   return {

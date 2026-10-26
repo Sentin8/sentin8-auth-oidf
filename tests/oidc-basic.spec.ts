@@ -17,7 +17,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { chromium } from '@playwright/test';
 import { SuiteApi, ACCEPTABLE, standardBrowserAutomation, type SuiteTestConfig, type SuiteClientConfig } from '../fixtures/suite.js';
 import { runModule, planResults } from '../fixtures/runner.js';
-import { certDiscoveryUrl, suiteCallback, CONFORMANCE_ALIAS, CERT_USER, certAuthHost, resultsDir } from '../fixtures/env.js';
+import { certDiscoveryUrl, suiteCallback, CONFORMANCE_ALIAS, certAuthHost, resultsDir, seedOutPath } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -63,8 +63,7 @@ const harnessBrowserBlock = standardBrowserAutomation();
 // (.tmp/conformance/cert-user.env printed ids + the platform store); the
 // operator exports OIDF_* or the file the seed writes is read here.
 function loadSeededClients(): void {
-  const seedOut = process.env.OIDF_SEED_OUT
-    ?? join(resultsDir(), '..', '..', '..', '.tmp', 'conformance', 'seed-out.txt');
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return;
   const text = readFileSync(seedOut, 'utf8');
   const get = (k: string) => text.match(new RegExp(`${k}=([a-f0-9]+)`))?.[1];
