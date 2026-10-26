@@ -62,11 +62,15 @@ function seededFapiClients(cell: string): { client: FapiClient; client2: FapiCli
   }
   const mk = (id: string, key: unknown): FapiClient => ({
     client_id: id,
-    client_auth_type: 'private_key_jwt',  
+    client_auth_type: 'private_key_jwt',
     token_endpoint_auth_method: 'private_key_jwt',
     scope: 'openid profile email phone address offline_access',
     redirect_uri: suiteCallback(),
-    jwks: { keys: [key] },
+    // The seed's doc may be a BARE JWK or the multi-key JWKS
+    // (ES256 + RSA) - pass through to {keys: [...]}.
+    jwks: Array.isArray((key as { keys?: unknown[] })?.keys)
+      ? (key as { keys: unknown[] })
+      : { keys: [key] },
   });
   return { client: mk(cid, jwksObj), client2: mk(cid2, jwksObj2) };
 }
@@ -120,7 +124,11 @@ function seededFapiMtlsClients(): { client: FapiClient; client2: FapiClient; mtl
     token_endpoint_auth_method: 'self_signed_tls_client_auth',
     scope: 'openid profile email phone address offline_access',
     redirect_uri: suiteCallback(),
-    jwks: { keys: [jwks] },
+    // The seed's doc may be a BARE JWK or the multi-key JWKS
+    // (ES256 + RSA, the RS256-negative signer) - pass through.
+    jwks: Array.isArray((jwks as { keys?: unknown[] })?.keys)
+      ? (jwks as { keys: unknown[] })
+      : { keys: [jwks] },
   });
   // The suite reads the TLS credentials at the TOP-LEVEL config
   // (Environment "config" / "mtls.cert|key|ca") - both clients share
