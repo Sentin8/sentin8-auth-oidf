@@ -587,18 +587,21 @@ if [[ "$PROFILE" == fapi_* ]]; then
     for cl in main second; do
       KEYJSON="$(python3 - <<'PYGEN'
 import base64, json
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-key = ec.generate_private_key(ec.SECP256R1())
-pub = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
-x = base64.urlsafe_b64encode(pub[1:33]).rstrip(b'=').decode()
-y = base64.urlsafe_b64encode(pub[33:65]).rstrip(b'=').decode()
-d = key.private_numbers().private_value.to_bytes(32, 'big')
-d_b64 = base64.urlsafe_b64encode(d).rstrip(b'=').decode()
+# FAPI2 client key = RSA-PS256 (auth DESIGN 9a.16 (i)): the FAPI2-BSA
+# signs client assertions/request objects with ES256/PS256; the suite's
+# alg-gated negatives (ensure-signed-...-with-RS256-fails) run ONLY
+# against a PS256-keyed client (JWKUtil.getAlgFromClientJwks == 'PS256')
+# - the RS256 re-signing (ChangeClientJwksAlgToRS256) then resolves with
+# the AS's reject (the alg mandate).
+key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+rn = key.public_key().public_numbers()
+def _bn(v): return base64.urlsafe_b64encode(v.to_bytes((v.bit_length()+7)//8, 'big')).rstrip(b'=').decode()
 kid = 'fapi2-key'
-private = {"kty": "EC", "kid": kid, "crv": "P-256", "x": x, "y": y, "d": d_b64, "alg": "ES256"}
-public = {"keys": [{"kty": "EC", "kid": kid, "use": "sig", "alg": "ES256", "crv": "P-256", "x": x, "y": y}]}
+private = {"kty": "RSA", "kid": kid, "n": _bn(rn.n), "e": _bn(rn.e), "d": _bn(key.private_numbers().d), "alg": "PS256"}
+public = {"keys": [{"kty": "RSA", "kid": kid, "use": "sig", "alg": "PS256", "n": _bn(rn.n), "e": _bn(rn.e)}]}
 print(json.dumps({"private": private, "public": public}))
 PYGEN
 )"
@@ -615,8 +618,14 @@ PYGEN
       else
         # The happy-flow's client2 uses the callback WITH extra
         # query parameters - the SUITE requires that exact URI
-        # registered (not a prefix match). Register it verbatim.
-        FJSON2="$(dcr "cert-fapi2-$cell-2" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$PUBJWKS,\"redirect_uris\":[\"$CALLBACK?dummy1=lorem&dummy2=ipsum\"]")"
+        # registered (not a prefix match). The request_uri-bound-
+        # to-client NEGATIVE sends client2 with the PLAIN callback
+        # (the suite's config.client2.redirect_uri) and expects the
+        # error redirect THERE - client2 registers BOTH (exact-string
+        # match per entry; the dummy preserves the happy-flow
+        # verbatim requirement, the plain callback is the negative's
+        # error target).
+        FJSON2="$(dcr "cert-fapi2-$cell-2" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$PUBJWKS,\"redirect_uris\":[\"$CALLBACK?dummy1=lorem&dummy2=ipsum\",\"$CALLBACK\"]")"
         emit_client "fapi2-second-$cell" "$FJSON2"
         echo "private_jwks(fapi2-second-$cell)=$PRIVJWKS" >> "$SEED_OUT"
       fi
@@ -639,7 +648,7 @@ if [[ "$PROFILE" == fapi_* ]]; then
     CERTJSON="$(python3 - <<'PYMTLS'
 import base64, hashlib, json
 from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, rsa as rsa_mod
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.x509.oid import NameOID
 import datetime
@@ -673,8 +682,13 @@ x = base64.urlsafe_b64encode(pub[1:33]).rstrip(b'=').decode()
 y = base64.urlsafe_b64encode(pub[33:65]).rstrip(b'=').decode()
 d = sig_key.private_numbers().private_value.to_bytes(32, 'big')
 d_b64 = base64.urlsafe_b64encode(d).rstrip(b'=').decode()
-private_jwks = {"kty": "EC", "kid": "fapi2-mtls-key", "crv": "P-256", "x": x, "y": y, "d": d_b64, "alg": "ES256"}
-public_jwks = {"keys": [{"kty": "EC", "kid": "fapi2-mtls-key", "use": "sig", "alg": "ES256", "crv": "P-256", "x": x, "y": y}]}
+# The mtls cell's signing jwks = RSA-PS256 as well (auth DESIGN 9a.16
+# (i)); the client CERTIFICATE stays the EC P-256 self-signed leaf.
+rsig = rsa_mod.generate_private_key(public_exponent=65537, key_size=2048)
+rsn = rsig.public_key().public_numbers()
+def _bn2(v): return base64.urlsafe_b64encode(v.to_bytes((v.bit_length()+7)//8, 'big')).rstrip(b'=').decode()
+private_jwks = {"kty": "RSA", "kid": "fapi2-mtls-key", "n": _bn2(rsn.n), "e": _bn2(rsn.e), "d": _bn2(rsig.private_numbers().d), "alg": "PS256"}
+public_jwks = {"keys": [{"kty": "RSA", "kid": "fapi2-mtls-key", "use": "sig", "alg": "PS256", "n": _bn2(rsn.n), "e": _bn2(rsn.e)}]}
 print(json.dumps({"cert_pem": cert.public_bytes(serialization.Encoding.PEM).decode(),
                   "key_pem": cert_key.private_bytes(serialization.Encoding.PEM,
                                                     serialization.PrivateFormat.PKCS8,
@@ -699,7 +713,7 @@ PYMTLS
       MJSON="$(dcr "cert-fapi2-mtls" "\"token_endpoint_auth_method\":\"self_signed_tls_client_auth\",\"self_signed_tls_client_auth_thumbprint\":\"$THUMB\",\"jwks\":$PUBJWKS")"
       emit_client "fapi2-mtls" "$MJSON"
     else
-      MJSON2="$(dcr "cert-fapi2-mtls-2" "\"token_endpoint_auth_method\":\"self_signed_tls_client_auth\",\"self_signed_tls_client_auth_thumbprint\":\"$THUMB\",\"jwks\":$PUBJWKS,\"redirect_uris\":[\"$CALLBACK?dummy1=lorem&dummy2=ipsum\"]")"
+      MJSON2="$(dcr "cert-fapi2-mtls-2" "\"token_endpoint_auth_method\":\"self_signed_tls_client_auth\",\"self_signed_tls_client_auth_thumbprint\":\"$THUMB\",\"jwks\":$PUBJWKS,\"redirect_uris\":[\"$CALLBACK?dummy1=lorem&dummy2=ipsum\",\"$CALLBACK\"]")"
       emit_client "fapi2-second-mtls" "$MJSON2"
     fi
     echo "mtls_cert_pem($cl)=$CERT_PEM" >> "$SEED_OUT"

@@ -267,7 +267,14 @@ async function runModuleOnPage(
   // exposes it (visit 1 must not authenticate; visit 2 completes).
   const driveCounts = new Map<string, number>();
   // The maximum visits a url with a matching twoVisit entry requires.
-  const maxVisits = browserBlock.some((e) => e?.twoVisit) ? 2 : 1;
+  // The cap allows the NEGATIVE modules' second browser round: the reuse
+  // / expired-request_uri / bound-to-client modules complete the happy
+  // flow on visit 1 (the SAME authorize URL), then the suite RE-EXPOSES
+  // that URL for the negative round whose error callback the module
+  // asserts (drive happens only in WAITING + the terminal-check abort
+  // keeps a re-drive safe). twoVisit entries get one more (visit-1-no-
+  // login + visit-2 login + the negative round).
+  const maxVisits = browserBlock.some((e) => e?.twoVisit) ? 3 : 2;
   let lastDrivenUrl: string | null = null;
   let lastDriveAt = 0;
   let pageOk = true;
