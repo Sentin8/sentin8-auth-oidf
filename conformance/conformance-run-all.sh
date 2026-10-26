@@ -76,7 +76,7 @@ for fam in "${requested[@]}"; do
   if CONFORMANCE_ENV_SLUG="$env_slug" \
      CONFORMANCE_ALIAS="$alias" \
      CONFORMANCE_PROFILE="$profile" \
-     npx playwright test "${SPECS[$fam]}" > "$log" 2>&1; then
+     bash -c "cd '$RIG' && npx playwright test '${SPECS[$fam]}'" > "$log" 2>&1; then
     echo "[conformance-run-all] $fam GREEN"
   else
     echo "[conformance-run-all] $fam FAILED (log: $log)"
