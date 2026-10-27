@@ -15,7 +15,12 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RIG="$(cd "$HERE/.." && pwd)"
-TMP="$(cd "$RIG/.." && pwd)/.tmp/conformance"
+# TREE root .tmp (where the seed writes + where fixtures/env.ts repoRoot()
+# resolves): fixtures/ → sentin8-auth-oidf/ → sentin8/ → TREE root. The
+# former group-root path (RIG/../.tmp) never held the seed's files, so the
+# per-env user env silently failed to load and every family signed in with
+# the legacy CERT_USER email (401 → WAITING stall).
+TMP="$(cd "$RIG/../.." && pwd)/.tmp/conformance"
 LOGDIR="$TMP/logs"
 mkdir -p "$LOGDIR"
 
