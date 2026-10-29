@@ -16,6 +16,26 @@ auth DESIGN §9a.10/§9a.11 campaign rules:
 - **Warning-zero** - a WARNING in a module's log fails the run (every
   warning is a real gap with a root fix, not a note).
 
+## Certification tests
+
+Certification campaign specs (one per profile plan):
+
+- OIDC Core Basic OP
+- OIDC Core Config OP
+- OIDC Core Dynamic OP
+- FAPI 2 Security Profile
+- FAPI 2 Message Signing
+- FAPI 1 Advanced
+- FAPI-CIBA poll + ping
+- RP-Initiated + Back-Channel Logout
+- OID4VCI 1.0 Final Issuer
+- OID4VCI 1.0 Final Wallet
+- OID4VCI 1.0 Issuer HAIP
+
+Non-campaign spec:
+
+- Smoke (harness boot check)
+
 ## How it drives the suite
 
 The suite's front channel (login) is executed by the running-test page's
