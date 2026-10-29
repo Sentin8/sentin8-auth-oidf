@@ -20,7 +20,7 @@
 # conformance/ - moved from the group scripts/ directory (OC-13).
 SHELL := /bin/bash
 
-.PHONY: help install test oidc-basic oidc-config oidc-dynamic fapi2 fapi1 ciba logout results
+.PHONY: help install test oidc-basic oidc-config oidc-dynamic fapi2 fapi1 ciba logout results clean
 
 help: ## Show this help
 	@echo "sentin8-auth-oidf (OIDF conformance automation)"
@@ -56,3 +56,6 @@ ciba: ## FAPI-CIBA poll + ping
 
 results: ## Show the latest results JSON
 	@cat results/oidf-results.json 2>/dev/null | head -50
+
+clean: ## Remove exported results + scratch/run dirs (.run .run/logs .tmp)
+	@rm -rf results .run .run/logs .tmp
