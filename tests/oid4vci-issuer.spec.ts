@@ -94,7 +94,7 @@ let planId: string;
 const seeded = seededVciClients();
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - OID4VCI Issuer (OC-13 warning-zero)',
+ description: 'Sentin8 auth certification run - OID4VCI Issuer ( warning-zero)',
   server: { discoveryUrl: certDiscoveryUrl() },
   vci: {
     credential_issuer_url: certAuthHost(),

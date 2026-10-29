@@ -31,7 +31,7 @@ let suiteApi: SuiteApi;
 let planId: string;
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - OIDC Core Dynamic (OC-13 warning-zero)',
+ description: 'Sentin8 auth certification run - OIDC Core Dynamic ( warning-zero)',
   server: { discoveryUrl: certDiscoveryUrl() },
 } as SuiteTestConfig;
 

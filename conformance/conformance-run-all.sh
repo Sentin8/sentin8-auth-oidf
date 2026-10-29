@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # conformance-run-all.sh - run the WHOLE battery (DESIGN 9a.2
-# profile-per-env, OC-20): for each family, export the family's tenant
+# profile-per-env,): for each family, export the family's tenant
 # env (env slug + alias + profile) + the per-env seed-out, drive the
 # family's spec, and tally. The per-family env is ALREADY SEEDED
 # (conformance-seed-all.sh) - this runner never flips a profile

@@ -26,7 +26,7 @@ let page: Page;
 let planId: string;
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - OIDC Core Config (OC-13 warning-zero)',
+ description: 'Sentin8 auth certification run - OIDC Core Config ( warning-zero)',
   server: { discoveryUrl: certDiscoveryUrl() },
   client: (JSON.parse(process.env.OIDF_CLIENT_BASIC ?? 'null') ?? {
     client_id: process.env.OIDF_BASIC_CLIENT_ID ?? '',

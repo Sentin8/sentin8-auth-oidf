@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // tests/logout.spec.ts - OIDC RP-Initiated + Back-Channel Logout - the
-// certification plan (OC-13 profile families; auth DESIGN S9a.5).
+// certification plan (profile families; auth DESIGN S9a.5).
 //
 // The standard posture re-seed serves this plan (plain OIDC Core; the
 // logout modules exercise end_session_endpoint + post_logout redirect +
@@ -26,7 +26,7 @@ const planIds: string[] = [];
 
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - OIDC Logout (OC-13 zero-warning)',
+ description: 'Sentin8 auth certification run - OIDC Logout ( zero-warning)',
   server: { discoveryUrl: certDiscoveryUrl() },
 };
 

@@ -67,7 +67,7 @@ function seededVciClients(): { client: VciClient; client2: VciClient; attesterJw
   // the wallet's request-signing keys ride the client-attestation
   // section (client_attestation.attester_jwks, private) exactly like the
   // issuer-plan's attester keys. The attestation issuer + trust anchor
-  // mirror the issuer profile's ATCA-07 registration.
+  // mirror the issuer profile's registration.
   const pubOnly = (l: string) => {
     try {
       const k = l ? JSON.parse(l) : null;
@@ -143,7 +143,7 @@ function issuerJwksInline(): unknown {
 
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - OID4VCI Wallet (OC-13 warning-zero)',
+ description: 'Sentin8 auth certification run - OID4VCI Wallet ( warning-zero)',
   server: { discoveryUrl: certDiscoveryUrl(), jwks: { keys: [] } },
   credential: seeded.signingJwk ? { signing_jwk: seeded.signingJwk } : {},
   vci: {

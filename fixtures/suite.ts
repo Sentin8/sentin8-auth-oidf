@@ -146,7 +146,7 @@ export function standardBrowserAutomation(): BrowserAutomationEntry[] {
         },
         {
           task: 'Logout Landing',
-          // RP-initiated logout (OC-13): the suite's front-channel
+          // RP-initiated logout : the suite's front-channel
           // url is /oauth/logout?id_token_hint=... - a plain GET the
           // OP answers 302 to the registered post_logout_redirect_uri
           // (the suite's landing page); the goto itself completes the

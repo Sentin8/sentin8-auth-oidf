@@ -7,7 +7,7 @@
 // (private_key_jwt keys, DPoP keys) against the cert env's registration
 // endpoint - the config carries only discovery + alias + browser block.
 // The cert env's security profile flips to fapi_2 BEFORE the run (the
-// suite.ts helper does it - OC-13) and back to standard after.
+// suite.ts helper does it -) and back to standard after.
 
 import { test, expect } from '@playwright/test';
 import { SuiteApi, standardBrowserAutomation, browserAutomationFor, type SuiteTestConfig } from '../fixtures/suite.js';
@@ -24,7 +24,7 @@ let planId: string;
 // dynamic_client: the suite DCRs its own clients - no pre-registered ids.
 const config = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - FAPI 2 Message Signing (OC-13)',
+ description: 'Sentin8 auth certification run - FAPI 2 Message Signing ',
   server: { discoveryUrl: certDiscoveryUrl() },
   // The protected resource the suite calls with the exchanged access
   // token - the cert auth's OWN userinfo endpoint is a real

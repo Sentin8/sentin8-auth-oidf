@@ -99,12 +99,12 @@ function seededHaipClients(): { client: VciClient; client2: VciClient; attesterJ
     attesterJwks,
     anchorPem: anchorPem.trim(),
     issuerCertPem: haipCaPem.trim() || issuerPem.trim(),
-    // OC-26: the attester identity is PER-ENV (the seed derives
+    // the attester identity is PER-ENV (the seed derives
     // https://vci-attester-<slug>.conformance-local for every family
     // env; the legacy constant is only env `cert`'s form). The OP's
     // security profile pins the SAME value - the suite's attestation
     // JWTs must carry the per-env iss or the OP rejects the PAR
-    // ('attestation iss mismatch', the live failure OC-26 closes).
+    // ('attestation iss mismatch', the live failure closes).
     attestationIssuer:
       text.match(/attestation_issuer\(vciatt\)=(\S+)/)?.[1] ?? ATTESTATION_ISSUER,
   };

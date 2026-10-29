@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # conformance-seed-all.sh - seed EVERY certification family's own
-# environment (DESIGN 9a.2 profile-per-env, OC-20): one env + one suite
+# environment (DESIGN 9a.2 profile-per-env,): one env + one suite
 # alias per family, each env's security profile PERMANENT. The battery
 # (conformance-run-all.sh / make conformance-all) then runs the specs in
 # sequence with NO seed-order coupling - each spec's env already carries

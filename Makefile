@@ -17,7 +17,7 @@
 #   pnpm install && pnpm run install-browsers (once)
 #
 # The rig collateral (suite compose, seed script, runbook) lives here in
-# conformance/ - moved from the group scripts/ directory (OC-13).
+# conformance/ - moved from the group scripts/ directory .
 SHELL := /bin/bash
 
 .PHONY: help install test oidc-basic oidc-config oidc-dynamic fapi2 fapi1 ciba logout results clean

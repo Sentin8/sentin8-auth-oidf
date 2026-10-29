@@ -11,9 +11,9 @@ tests the platform's own surfaces, this repo drives the
 platform certifies for - unattended, reproducible, and enforcing the
 auth DESIGN §9a.10/§9a.11 campaign rules:
 
-- **No-skip** — a SKIPPED (or FAILED/INTERRUPTED) module fails the run
+- **No-skip** - a SKIPPED (or FAILED/INTERRUPTED) module fails the run
   (a skip means discovery advertised a capability away).
-- **Warning-zero** — a WARNING in a module's log fails the run (every
+- **Warning-zero** - a WARNING in a module's log fails the run (every
   warning is a real gap with a root fix, not a note).
 
 ## How it drives the suite
@@ -43,7 +43,7 @@ bridge), not the temporary HTML login page (`/oauth/login`).
 | `fixtures/env.ts` | Tree-root `.env` loader (SENTIN8_DOMAIN-derived URLs, no hardcoding) |
 | `fixtures/suite.ts` | Suite REST client (plan create / runner create / logs) + the standard browser block |
 | `fixtures/runner.ts` | Run-one-module loop: WAITING polling → browser task execution → terminal wait → log classification |
-| `tests/oidc-basic.spec.ts` | OIDC Core Basic OP (35 modules) — the reference profile suite |
+| `tests/oidc-basic.spec.ts` | OIDC Core Basic OP (35 modules) - the reference profile suite |
 | `tests/fapi2-security.spec.ts` | FAPI 2 Security Profile (PAR + DPoP + JARM) |
 | `tests/fapi2-message-signing.spec.ts` | FAPI 2 Message Signing (HTTP signatures + signed introspection) |
 | `tests/fapi1-advanced.spec.ts` | FAPI 1 Advanced (mTLS + JAR + PAR) |
@@ -54,7 +54,7 @@ bridge), not the temporary HTML login page (`/oauth/login`).
 ## Prerequisites (one-time)
 
 ```bash
-# tree root (sentin8/) — the rig posture ships from the target itself
+# tree root (sentin8/) - the rig posture ships from the target itself
 # (classical TLS + FAPI ciphers + self-signed client certs; no .env edit)
 make start-conformance   # platform fleet in the rig posture
 make conformance-up      # suite stack (mongo + server + nginx)

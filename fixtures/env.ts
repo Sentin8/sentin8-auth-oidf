@@ -82,7 +82,7 @@ export const SUITE_BASE = 'https://localhost.emobix.co.uk:8443';
  * the cert org slug is fixed by the seed script
  * (conformance/conformance-seed.sh): org `conformance-local`.
  *
- * Profile-per-env (DESIGN §9a.2, OC-20): the ENV SLUG + the suite ALIAS
+ * Profile-per-env (DESIGN §9a.2,): the ENV SLUG + the suite ALIAS
  * resolve per family - the seed writes CONFORMANCE_ENV_SLUG/
  * CONFORMANCE_ALIAS into the per-env cert-user-<slug>.env; the campaign
  * runner exports them (or the runner process reads the per-env file

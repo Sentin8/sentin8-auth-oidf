@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // fixtures/profiles.ts - the certification families' tenant map (DESIGN
-// §9a.2 profile-per-env, OC-20): each family seeds its OWN env (env slug
+// §9a.2 profile-per-env,): each family seeds its OWN env (env slug
 // + suite alias) so the env's security-profile row is PERMANENT - the
 // whole battery (`npm run test` / `make conformance-all`) runs the
 // families in sequence with NO seed-order coupling.

@@ -26,7 +26,7 @@ let planId: string;
 
 const config = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - FAPI 1 Advanced final (OC-13)',
+ description: 'Sentin8 auth certification run - FAPI 1 Advanced final ',
   server: { discoveryUrl: certDiscoveryUrl() },
   resource: {
     resourceUrl: `${certAuthHost().replace(/\/$/, '')}/oauth/userinfo`,
