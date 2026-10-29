@@ -44,11 +44,17 @@ bridge), not the temporary HTML login page (`/oauth/login`).
 | `fixtures/suite.ts` | Suite REST client (plan create / runner create / logs) + the standard browser block |
 | `fixtures/runner.ts` | Run-one-module loop: WAITING polling → browser task execution → terminal wait → log classification |
 | `tests/oidc-basic.spec.ts` | OIDC Core Basic OP (35 modules) - the reference profile suite |
+| `tests/oidc-config.spec.ts` | OIDC Core Config OP - discovery completeness (the same static seeded clients as Basic) |
+| `tests/oidc-dynamic.spec.ts` | OIDC Core Dynamic OP - RFC 7591 DCR + WebFinger (the suite registers its own clients) |
 | `tests/fapi2-security.spec.ts` | FAPI 2 Security Profile (PAR + DPoP + JARM) |
 | `tests/fapi2-message-signing.spec.ts` | FAPI 2 Message Signing (HTTP signatures + signed introspection) |
 | `tests/fapi1-advanced.spec.ts` | FAPI 1 Advanced (mTLS + JAR + PAR) |
 | `tests/ciba.spec.ts` | FAPI-CIBA poll + ping |
 | `tests/logout.spec.ts` | RP-Initiated + Back-Channel Logout |
+| `tests/oid4vci-issuer.spec.ts` | OID4VCI 1.0 Final Issuer - credential endpoint family (private_key_jwt + DPoP, SD-JWT VC; the suite acts as the wallet) |
+| `tests/oid4vci-wallet.spec.ts` | OID4VCI 1.0 Final Wallet - credential-offer front channel + authorization-code grant (the suite acts as the wallet against our issuer) |
+| `tests/oid4vci-haip.spec.ts` | OID4VCI 1.0 Issuer HAIP - client-attestation auth (`OAuth-Client-Attestation` + `OAuth-Client-Attestation-PoP`) |
+| `tests/smoke.spec.ts` | Harness boot check - one module end-to-end through the Flutter auth-ui (not a certification campaign) |
 | `results/` | Per-module logs + the campaign results JSON (gitignored) |
 
 ## Prerequisites (one-time)
@@ -67,6 +73,9 @@ cd sentin8-auth-oidf
 
 ```bash
 make oidc-basic          # the Basic OP plan (35 modules)
+make oidc-config         # the Config OP plan (discovery completeness)
+make oidc-dynamic        # the Dynamic OP plan (DCR + WebFinger)
+make oid4vci-issuer      # the VCI Issuer plan (SD-JWT VC)
 make fapi2 && make fapi1 && make ciba
 ```
 
