@@ -20,6 +20,10 @@
 # conformance/ - moved from the group scripts/ directory .
 SHELL := /bin/bash
 
+# The tree root (fixtures/env.ts resolves the same way): the seed
+# writes its per-env files under {tree}/.tmp/conformance/.
+SENTIN8_REPO_ROOT ?= $(abspath ../..)
+
 .PHONY: help install test oidc-basic oidc-config oidc-dynamic fapi2 fapi1 ciba logout results clean
 
 help: ## Show this help
@@ -33,26 +37,52 @@ install: ## pnpm install + browsers
 test: ## Run every profile suite (serial)
 	@pnpm run test
 
+# ── Per-family env loading ────────────────────────────────────────────────
+# The seed writes the per-env user identity + slug/alias into
+# cert-user{,-<slug>}.env (DESIGN §9a.2 item 2); the battery wrapper
+# (conformance-run-all.sh) exports it before each family - a DIRECT
+# target run must source the SAME file or the harness falls back to a
+# wrong-tenant identity.
+# FAMILY_ENV = the env slug (cert | cert-ciba | ...); resolve the seed
+# file, source it, then hand the slug/alias to playwright.
+FAMILY_ENV ?= cert
+CERT_USER_FILE = $(if $(filter cert,$(FAMILY_ENV)),cert-user.env,cert-user-$(FAMILY_ENV).env)
+CERT_USER_PATH = $(SENTIN8_REPO_ROOT)/.tmp/conformance/$(CERT_USER_FILE)
+CERT_USER_SLUG = $(shell [ -f "$(CERT_USER_PATH)" ] && grep -m1 '^CONFORMANCE_ENV_SLUG=' "$(CERT_USER_PATH)" | cut -d= -f2)
+CERT_USER_ALIAS = $(shell [ -f "$(CERT_USER_PATH)" ] && grep -m1 '^CONFORMANCE_ALIAS=' "$(CERT_USER_PATH)" | cut -d= -f2)
+
+define with_family_env
+	@test -f "$(CERT_USER_PATH)" || { echo 'No $(CERT_USER_FILE) - run the seed first (make conformance-seed-all or CONFORMANCE_ENV_SLUG=$(FAMILY_ENV) make conformance-seed).'; exit 1; }; \
+	set -a; . "$(CERT_USER_PATH)"; set +a; \
+	CONFORMANCE_ENV_SLUG=$(or $(CERT_USER_SLUG),$(FAMILY_ENV)) \
+	CONFORMANCE_ALIAS=$(or $(CERT_USER_ALIAS),$(FAMILY_ENV)) \
+	$(1)
+endef
+
 oidc-basic: ## OIDC Core Basic OP (35 modules, warning-zero)
-	@pnpm run test:basic
+	@$(call with_family_env,pnpm run test:basic)
 
 oidc-config: ## OIDC Core Config OP (discovery completeness, warning-zero)
-	@pnpm run test:config
+	@$(call with_family_env,pnpm run test:config)
 
 oidc-dynamic: ## OIDC Core Dynamic OP (RFC 7591 DCR cells, warning-zero)
-	@pnpm run test:dynamic
+	@$(call with_family_env,pnpm run test:dynamic)
 
+oid4vci-issuer: FAMILY_ENV := cert-vci
 oid4vci-issuer: ## OID4VCI 1.0 Issuer plan (wallet role = suite, warning-zero)
-	@pnpm run test:oid4vci-issuer
+	@$(call with_family_env,pnpm run test:oid4vci-issuer)
 
+fapi2: FAMILY_ENV := cert-fapi2
 fapi2: ## FAPI 2 Security Profile
-	@pnpm run test:fapi2
+	@$(call with_family_env,pnpm run test:fapi2)
 
+fapi1: FAMILY_ENV := cert-fapi1
 fapi1: ## FAPI 1 Advanced
-	@pnpm run test:fapi1
+	@$(call with_family_env,pnpm run test:fapi1)
 
+ciba: FAMILY_ENV := cert-ciba
 ciba: ## FAPI-CIBA poll + ping
-	@pnpm run test:ciba
+	@$(call with_family_env,pnpm run test:ciba)
 
 results: ## Show the latest results JSON
 	@cat results/oidf-results.json 2>/dev/null | head -50

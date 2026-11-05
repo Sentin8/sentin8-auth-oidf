@@ -24,6 +24,16 @@ const DOTENV_VARS = [
   'SENTIN8_DOMAIN',
   'SENTIN8_REPO_ROOT',
   'SENTIN8_SENTIN8_AUTH_URL',
+  // The fleet's TLS posture vars ride the SAME `.env` the rig boots
+  // from (DESIGN §9a.2 item 3 - the suite-visible posture), so every
+  // CLI subprocess this harness spawns (the rotate-keys operator
+  // hook's sentin8-cli call) speaks the rig transport - the CLI
+  // defaults to `exclusive` and a classical fleet fails its handshake
+  // (`received fatal alert: HandshakeFailure`).
+  'SENTIN8_TLS_PQ_MODE',
+  'SENTIN8_TLS_CIPHER_PROFILE',
+  'SENTIN8_MTLS_CLIENT_AUTH',
+  'SENTIN8_TLS_CLIENT_AUTH',
 ] as const;
 
 function repoRoot(): string {
@@ -58,6 +68,16 @@ function loadDotenv(): void {
 }
 
 loadDotenv();
+
+// The published platform CA chain copy - the CLI's TLS trust anchor for
+// rig-posture calls (launcher parity: the CLI derives the same fallback
+// itself, but exporting it keeps the subprocess contract explicit).
+{
+  const ca = join(repoRoot(), '.run', 'secrets', 'acme-ca', 'root-ca.crt');
+  if (existsSync(ca) && process.env.SENTIN8_TLS_CA_PEM === undefined) {
+    process.env.SENTIN8_TLS_CA_PEM = ca;
+  }
+}
 
 /** The platform domain (SENTIN8_DOMAIN; no default). */
 export function platformDomain(): string {
@@ -127,27 +147,66 @@ export function suiteCibaNotification(alias: string = CONFORMANCE_ALIAS): string
 
 /**
  * The certification test user (per-env - provisioned by the seed into
- * the active env; the per-env email defaults from the env slug).
+ * the active env; DESIGN §9a.2 item 2 - one user per env).
+ *
+ * The identity resolves from the operator's export FIRST,
+ * then from the seed-written `cert-user{,-<slug>}.env` file (the same
+ * source the battery wrapper exports) - a DIRECT spec run (make
+ * oidc-*, npx playwright test <spec>) gets the seeded identity without
+ * the operator having to source the file. The legacy constant fallback
+ * remains only for the env-`cert` shape; a file-less OTHER env throws
+ * loudly (the seeded user's email embeds the env slug - guessing it
+ * would 401 every sign-in).
  */
 export function certUser(envSlug: string = CERT_ENV_SLUG): { email: string; password: string } {
-  return {
-    email:
-      process.env.CONFORMANCE_USER_EMAIL ??
-      `cert-user@${envSlug}.${CERT_ORG_SLUG}.${platformDomain()}`,
-    password: process.env.CONFORMANCE_USER_PASSWORD ?? 'Certification!2026',
-  };
+  const fileEmail = (() => {
+    try {
+      const raw = readFileSync(certUserEnvPath(envSlug), 'utf-8');
+      const m = raw.match(/^CONFORMANCE_USER_EMAIL=(.*)$/m);
+      return m?.[1]?.trim() || null;
+    } catch {
+      return null;
+    }
+  })();
+  const filePassword = (() => {
+    try {
+      const raw = readFileSync(certUserEnvPath(envSlug), 'utf-8');
+      const m = raw.match(/^CONFORMANCE_USER_PASSWORD=(.*)$/m);
+      return m?.[1]?.trim() || null;
+    } catch {
+      return null;
+    }
+  })();
+  const email = process.env.CONFORMANCE_USER_EMAIL ?? fileEmail;
+  const password = process.env.CONFORMANCE_USER_PASSWORD ?? filePassword ?? 'Certification!2026';
+  if (!email) {
+    // The legacy single-env constant (the standard family's flat form) -
+    // only for env `cert`, whose seeded identity may legitimately live
+    // in the flat cert-user.env (a file-less cert env here means the
+    // standard family was never seeded; the legacy constant keeps the
+    // pre-file contract (a 401 at sign-in, loudly).
+    if (envSlug === 'cert') {
+      return {
+        email: 'cert-user@conformance-local.local.sentin8.dev',
+        password,
+      };
+    }
+    throw new Error(
+      `No cert-user identity for env '${envSlug}' - run the seed ` +
+        `(make conformance-seed-all / CONFORMANCE_ENV_SLUG=${envSlug}) or export ` +
+        `CONFORMANCE_USER_EMAIL; the per-env email embeds the env slug and cannot be guessed.`,
+    );
+  }
+  return { email, password };
 }
 
 /**
  * The default CERT_USER binding kept for the single-env callers (the
- * standard family; the per-family specs call `certUser()`).
+ * standard family; the per-family specs call `certUser()`). Resolves
+ * through [`certUser`] so a direct spec run inherits the seed-written
+ * identity for env `cert`.
  */
-export const CERT_USER = {
-  email:
-    process.env.CONFORMANCE_USER_EMAIL ??
-    'cert-user@conformance-local.local.sentin8.dev',
-  password: process.env.CONFORMANCE_USER_PASSWORD ?? 'Certification!2026',
-};
+export const CERT_USER = certUser();
 
 // Node's fetch (the suite API client + any direct auth fetch) must trust
 // the PLATFORM root CA (the rig's leaf chains to it). The env var must be
