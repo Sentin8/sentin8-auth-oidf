@@ -210,12 +210,13 @@ test('OID4VCI Wallet - run every module-variant to terminal, zero-warning green'
   planId = plan.id;
   logStep(`plan ${planId}: ${plan.modules.length} module-variants`);
   {
-    const moduleVariants = new Map<string, Record<string, string>>();
-    for (const m of (await suiteApi.getPlan(planId)).modules) {
-      moduleVariants.set(m.testModule, (m.variant ?? {}) as Record<string, string>);
-    }
+    // Per-entry variant resolution (the HAIPFIX-1 duplicate-slice rule,
+    // rig README 'Runner contract'): pass EACH plan entry's OWN
+    // modules[].variant to the runner create - a name-keyed map would
+    // collapse duplicated modules onto the last entry's slice.
     for (const modEntry of (await suiteApi.getPlan(planId)).modules) {
       const m = modEntry;
+      const ownVariant = (m.variant ?? {}) as Record<string, string>;
       if (onlyList.length > 0 && !onlyList.includes(m.testModule)) {
         logStep(`SKIP-ONLY ${m.testModule}`);
         continue;
@@ -225,7 +226,7 @@ test('OID4VCI Wallet - run every module-variant to terminal, zero-warning green'
         continue;
       }
       const run = await runModule(suiteApi, browser, planId, m.testModule,
-        { ...config, browser: harnessBrowserBlock }, 600_000, moduleVariants.get(m.testModule));
+        { ...config, browser: harnessBrowserBlock }, 600_000, ownVariant);
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
       expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
       if (run.warnings.length > 0) {
