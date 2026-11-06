@@ -244,27 +244,17 @@ test('FAPI2 Security Profile - run every module-variant to terminal, zero-warnin
         .filter((e: { result?: string; msg?: string }) => e.result === 'SKIPPED')
         .map((e: { msg?: string }) => e.msg ?? '')
         .join(' | ');
-      // SUITE-CLIENT KNOWN-LIMITATION (dpop-negative-tests): the block
-      // "Try with more than one DPoP in the header" - the suite's JVM
-      // HttpURLConnection collapses the two stored proof values into ONE
-      // wire header before send (verified: the proxy wire never logs
-      // multiple DPoP headers), so the RS legitimately serves the
-      // single-valid-proof request 200 and the module lands FAILED
-      // failures=1. The SERVER side of this negative is implemented and
-      // proven at the wire (two-line DPoP → 401, comma-joined DPoP → 401
-      // through proxy+auth). Treated like the sanctioned skip: client
-      // limitation, not a server defect.
-      const multiDpopLimit = (run.log ?? []).some(
-        (e: { msg?: string }) => (e.msg ?? '').includes('more than one DPoP in the header'),
-      );
+      // HAIPFIX-1: the multi-DPoP negative is NO LONGER sanctioned - the
+      // sentin8-tls context middleware preserves the two-line DPoP shape
+      // (sdk-v0.6.24), so the wire serves the RFC 9449 7.1 reject and the
+      // module finishes PASSED (the former JVM-collapse FAIL-SANCTION is
+      // dead code, removed).
       if (result === 'SKIPPED') {
         if (!/requires RSA keys|alg in client configuration is 'ES256'/i.test(skipMsg)) {
           failures.push(`[SKIP-unexpected] ${m.testModule}: ${skipMsg}`);
         } else {
           logStep(`SKIP-SANCTIONED ${m.testModule} (ES256 client - suite-blessed)`);
         }
-      } else if (result === 'FAILED' && multiDpopLimit) {
-        logStep(`FAIL-SANCTIONED ${m.testModule} (suite JVM collapses multiple DPoP headers - server negative proven at the wire)`);
       } else {
         expect(result, `${m.testModule} must not fail/skip`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
       }
