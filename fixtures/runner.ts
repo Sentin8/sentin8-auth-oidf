@@ -455,13 +455,56 @@ async function runModuleOnPage(
             }
             continue;
           }
-          uploaded.add(ph);
           // The confirmation wants a screenshot of what the browser SHOWS
           // (e.g. prompt=login's ExpectSecondLoginPage - the second
           // sign-in page). Capture the live page: the drive that produced
           // this placeholder has landed the browser on exactly the
           // surface the module asks to see; a blank placeholder closes
           // the question with an image that answers nothing.
+          //
+          // CONFFIX-1 (CIBA 3.1.2 - the binding-message display): a
+          // pending binding-message confirmation whose browser sits on
+          // about:blank (the approval hook below drove the API path and
+          // never visited the user-facing page) is resolved by DRIVING
+          // the OP's assisted-login page - the surface that renders the
+          // binding message to the authenticating user - and
+          // screenshotting THAT. A blank upload would close the module
+          // as a hollow REVIEW with an image that answers nothing
+          // (CONFFIX-1: the about:blank class).
+          const confirmMsg = String(e?.msg ?? '');
+          const wantsBindingMessage = /binding message/i.test(confirmMsg);
+          if (wantsBindingMessage && cibaApproval) {
+            // The assisted page route is /ciba/assisted/{auth_req_id} -
+            // resolve the newest auth_req_id the module issued (the
+            // cibaCompleted set tracks what the approval hook already
+            // acted on; the pending placeholder belongs to the FIRST
+            // unconsumed id).
+            const log2 = await suiteApi.getLog(runnerId);
+            let authReqId: string | null = null;
+            for (const e2 of log2) {
+              const back = e2?.backchannel_authentication_endpoint_response;
+              if (typeof back === 'string') {
+                try {
+                  const parsed = JSON.parse(back);
+                  if (typeof parsed?.auth_req_id === 'string') authReqId = parsed.auth_req_id;
+                } catch {
+                  // not yet parseable
+                }
+              }
+            }
+            if (authReqId) {
+              const assistedUrl = `${certAuthBase}/ciba/assisted/${authReqId}`;
+              try {
+                await page.goto(assistedUrl, { waitUntil: 'load', timeout: 20_000 });
+                // Give the Flutter SPA time to fetch the assisted metadata
+                // and render the binding message.
+                await page.waitForTimeout(4_000);
+                logStep(`  drove assisted-login page for the binding message (${authReqId.slice(0, 8)})`);
+              } catch (err) {
+                logStep(`  assisted page goto failed: ${(err as Error).message.slice(0, 80)}`);
+              }
+            }
+          }
           try {
             const buf = await page.screenshot({ timeout: 10_000 });
             const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
@@ -478,7 +521,19 @@ async function runModuleOnPage(
     // 'Please rotate' instruction, force a platform key rotation
     // (CLI-signed internal rotate) and RESUME the runner with the
     // suite's start action (POST /api/runner/<instance>). Phase B then
+    // The rotate-keys operator action (the two-phase
+    // oidcc-server-rotate-keys module): when the runner log carries the
+    // 'Please rotate' instruction, force a platform key rotation
+    // (CLI-signed internal rotate) and RESUME the runner with the
+    // suite's start action (POST /api/runner/<instance>). Phase B then
     // fetches the JWKS again and finds the new key.
+    //
+    // CONFFIX-1 (honest reporting): a FAILED rotation (e.g. the
+    // operator CLI credentials are missing/expired) must NOT silently
+    // resume phase B - the module would land a hollow FAILED ('no new
+    // keys') and the campaign would blame the wrong layer. Surface the
+    // operator action loudly and throw (the spec's per-module gate
+    // then reports the real cause: run 'sentin8-cli signin').
     if (!rotateCompleted.has(runnerId)) {
       const log = await suiteApi.getLog(runnerId);
       const needsRotate = log.some(
@@ -495,7 +550,11 @@ async function runModuleOnPage(
           });
           logStep('  OP keys rotated (force) - resuming rotate-keys phase B');
         } catch (e) {
-          logStep(`  key rotate failed: ${String(e).slice(0, 120)}`);
+          logStep(`  key rotate failed: ${String(e).slice(0, 200)}`);
+          throw new Error(
+            `oidcc-server-rotate-keys operator action failed - the platform key rotation CLI call could not authenticate. ` +
+            `Run 'sentin8-cli signin' (valid operator credentials) and re-run the family. Cause: ${String(e).slice(0, 160)}`,
+          );
         }
         const resumed = await suiteApi.resumeRunner(runnerId);
         logStep(`  rotate-keys phase B resumed: ${resumed}`);
