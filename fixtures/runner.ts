@@ -28,8 +28,31 @@
 import type { Page, Browser } from '@playwright/test';
 import { chromium as _chromium } from '@playwright/test';
 import { SuiteApi, ACCEPTABLE, TERMINAL, type SuiteTestConfig, type BrowserAutomationEntry } from './suite.js';
-import { certAuthHost, CONFORMANCE_ALIAS } from './env.js';
+import { certAuthHost, CONFORMANCE_ALIAS, seedOutPath } from './env.js';
 import { logStep } from './log.js';
+import { readFileSync, existsSync } from 'node:fs';
+
+/**
+ * The cert env's RFC 8628 device-flow client id (the rotate-keys
+ * operator grant's client - seeded by conformance-seed.sh as
+ * `client_id(device)`). The device endpoint resolves its client row
+ * under the CERT env's RLS context, so the platform CLI client
+ * (system-env row) answers 401 invalid_client here - the seed's
+ * dedicated cert-env client is the fix. Falls back to the platform
+ * client id when seed-out does not yet carry the fact.
+ */
+function deviceClientId(): string {
+  try {
+    const p = seedOutPath();
+    if (existsSync(p)) {
+      const m = readFileSync(p, 'utf8').match(/client_id\(device\)=([a-f0-9]+)/);
+      if (m) return m[1];
+    }
+  } catch {
+    // fall through to the platform default
+  }
+  return 'sentin8-cli';
+}
 
 /** One completed module run. */
 export interface ModuleRun {
@@ -561,7 +584,7 @@ async function runModuleOnPage(
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({
-              client_id: 'sentin8-cli',
+              client_id: deviceClientId(),
               scope: 'sentin8:auth:admin:write',
               audience: 'sentin8',
             }),
@@ -599,7 +622,7 @@ async function runModuleOnPage(
               body: new URLSearchParams({
                 grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
                 device_code: dev.device_code,
-                client_id: 'sentin8-cli',
+                client_id: deviceClientId(),
               }),
             });
             if (tok.ok) {
