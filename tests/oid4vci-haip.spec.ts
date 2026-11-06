@@ -187,21 +187,22 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal, zero-warning g
     // Per-module variant resolution: the plan leaves SOME axes
     // user-selected per module (e.g. happy-flow needs sender_constrain
     // while metadata-test plan-locks it). GET /api/plan/<id>'s
-    // modules[].variant carries the resolved values - pass each
-    // module's dict to the runner create (query param, empty body).
-    const moduleVariants = new Map<string, Record<string, string>>();
-    for (const m of (await suiteApi.getPlan(planId)).modules) {
-      moduleVariants.set(m.testModule, (m.variant ?? {}) as Record<string, string>);
-    }
+    // modules[].variant carries the resolved values - pass EACH
+    // ENTRY'S OWN dict to the runner create (query param, empty body).
+    // The dict MUST come from the entry itself, NEVER from a name-keyed
+    // map: the HAIP plan DUPLICATES three modules under different
+    // vci_credential_encryption values (plain vs encrypted) - a
+    // name-keyed map collapses the duplicates to the last entry and
+    // the sibling slice stays PENDING at the plan gate (the HAIPFIX-1
+    // runner contract; auth DESIGN 9a.19 plan census).
     for (const modEntry of (await suiteApi.getPlan(planId)).modules) {
       const m = modEntry;
+      const ownVariant = (m.variant ?? {}) as Record<string, string>;
       // The HAIP plan ships the full FAPI2-client module family under
       // fapi_profile=vci_haip - they belong to THIS cell (the plan-level
       // gate requires every entry terminal); only oid4vci entries carry a
       // vci_credential_encryption axis and the metadata modules lock
-      // fapi_request_method. The multi-DPoP negative = the suite JVM
-      // collapse sanction (same as the f2 cells - the server negative is
-      // proven at the wire, DESIGN §9a.22).
+      // fapi_request_method.
       if (onlyList.length > 0 && !onlyList.includes(m.testModule)) {
         logStep(`SKIP-ONLY ${m.testModule}`);
         continue;
@@ -218,45 +219,25 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal, zero-warning g
       const run = await runModule(suiteApi, browser, planId, m.testModule,
         { ...config, browser: browserAutomationFor(m.testModule) },
         /expired-request_uri/i.test(m.testModule) ? 960_000 : 600_000,
-        moduleVariants.get(m.testModule));
+        ownVariant);
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
-      // SUITE-BLESSED SKIPS (the HAIP credential authorization's scope =
-      // the CREDENTIAL scope only - the suite builds the authorize
-      // request from the credential configuration, so the token response
-      // has no offline_access and the refresh-token module cannot test
-      // the refresh flow; the suite's own skip text blesses it: "This is
-      // acceptable if the server has a policy of issuing refresh tokens
-      // to some clients"). Everything else stays a failure.
-      const skipMsg = (run.log ?? [])
-        .filter((e: { result?: string; msg?: string }) => e.result === 'SKIPPED')
-        .map((e: { msg?: string }) => e.msg ?? '')
-        .join(' | ');
-      const multiDpopLimit = (run.log ?? []).some(
-        (e: { msg?: string }) => (e.msg ?? '').includes('more than one DPoP in the header'),
-      );
-      const refreshUntestable = /Refresh tokens cannot be tested/i.test(skipMsg);
-      if (run.result === 'FAILED' && multiDpopLimit) {
-        logStep(`FAIL-SANCTIONED ${m.testModule} (suite JVM collapses multiple DPoP headers - server negative proven at the wire)`);
-      } else if (run.result === 'SKIPPED' && refreshUntestable) {
-        logStep(`SKIP-SANCTIONED ${m.testModule} (no offline_access on the HAIP credential authorization - suite-blessed policy skip)`);
-      } else if (run.result === 'SKIPPED' && refreshUntestable) {
-        // OC-27c: the refresh-token module's WARNING ("did not issue one")
-        // rides the same sanctioned skip - the HAIP credential grant
-        // requests no offline_access and the refresh issuance policy is
-        // the OP's (the suite's own message: "acceptable if the server
-        // has a policy of issuing refresh tokens to some clients").
-        logStep(`WARN-SANCTIONED ${m.testModule} (refresh-token policy - suite-blessed)`);
-      } else {
-        expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
-      }
-      const refreshWarnOnly = (run.result === 'SKIPPED' && refreshUntestable)
-        && run.warnings.every((w: string) => /did not issue one|refresh tokens to some clients/i.test(w));
-      if (run.warnings.length > 0 && !refreshWarnOnly) {
+      // HAIPFIX-1: the campaign gate is UNCONDITIONAL - every module
+      // terminal PASSED, zero warnings, NO sanctioned failures or
+      // skips (the two former blesses are CLOSED: the multi-DPoP
+      // negative rejects at the wire - the sentin8-tls middleware
+      // keeps the two-line DPoP shape - and the refresh-token module
+      // runs green on the OC-27b vci_haip posture rule; auth DESIGN
+      // 9a.19).
+      expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
+      if (run.warnings.length > 0) {
         failures.push(`${m.testModule}: ${run.warnings.join(' | ')}`);
       }
       const out = join(resultsDir(), 'logs');
       mkdirSync(out, { recursive: true });
-      writeFileSync(join(out, `oid4vci-haip-${m.testModule}.json`), JSON.stringify(run.log));
+      // Duplicated modules (plain vs encrypted slices) write
+      // distinct logs: the variant axes ride the filename.
+      const enc = ownVariant.vci_credential_encryption ?? 'plain';
+      writeFileSync(join(out, `oid4vci-haip-${m.testModule}-${enc}.json`), JSON.stringify(run.log));
     }
   }
   expect(failures, `warning-zero violations:\n${failures.join('\n')}`).toEqual([]);
@@ -265,11 +246,11 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal, zero-warning g
 test('plan-level results are all acceptable', async () => {
   test.skip(!!(process.env.OIDF_MODULES ?? '').trim(), 'singles run - plan gate skipped');
   const results = await planResults(suiteApi, planId);
-  // The two SANCTIONED verdicts ride the plan gate as well (the same
-  // blesses the per-module loop applies): the multi-DPoP JVM collapse
-  // (server negative proven at the wire) and the refresh-token policy
-  // skip (no offline_access on the HAIP credential grant).
-  const sanctioned = new Set(['fapi2-security-profile-final-dpop-negative-tests', 'fapi2-security-profile-final-refresh-token']);
-  const bad = [...results.entries()].filter(([m, r]) => r && !ACCEPTABLE.has(r) && !(sanctioned.has(m) && (r === 'FAILED' || r === 'SKIPPED')));
+  // HAIPFIX-1: the plan gate is UNCONDITIONAL - every module-variant
+  // terminal PASSED (the duplicate-slice runner runs BOTH entries, the
+  // multi-DPoP negative rejects at the wire, the refresh-token module
+  // rides the OC-27b posture rule). No sanctioned verdicts remain
+  // (auth DESIGN 9a.19).
+  const bad = [...results.entries()].filter(([m, r]) => r && !ACCEPTABLE.has(r));
   expect(bad, 'FAILED/SKIPPED/INTERRUPTED modules').toEqual([]);
 });

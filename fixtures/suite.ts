@@ -458,8 +458,3 @@ export class SuiteApi {
     });
   }
 }
-
-/** A tiny valid PNG (screenshot confirmations only need A png). */
-export const SCREENSHOT_PNG_DATA_URI =
-  'data:image/png;base64,' +
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';

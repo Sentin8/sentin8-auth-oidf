@@ -27,7 +27,7 @@
 
 import type { Page, Browser } from '@playwright/test';
 import { chromium as _chromium } from '@playwright/test';
-import { SuiteApi, ACCEPTABLE, TERMINAL, SCREENSHOT_PNG_DATA_URI, type SuiteTestConfig, type BrowserAutomationEntry } from './suite.js';
+import { SuiteApi, ACCEPTABLE, TERMINAL, type SuiteTestConfig, type BrowserAutomationEntry } from './suite.js';
 import { certAuthHost, CONFORMANCE_ALIAS } from './env.js';
 import { logStep } from './log.js';
 
@@ -456,11 +456,19 @@ async function runModuleOnPage(
             continue;
           }
           uploaded.add(ph);
+          // The confirmation wants a screenshot of what the browser SHOWS
+          // (e.g. prompt=login's ExpectSecondLoginPage - the second
+          // sign-in page). Capture the live page: the drive that produced
+          // this placeholder has landed the browser on exactly the
+          // surface the module asks to see; a blank placeholder closes
+          // the question with an image that answers nothing.
           try {
-            await suiteApi.uploadImage(runnerId, ph, SCREENSHOT_PNG_DATA_URI);
-            logStep(`  uploaded screenshot placeholder ${ph}`);
+            const buf = await page.screenshot({ timeout: 10_000 });
+            const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
+            await suiteApi.uploadImage(runnerId, ph, dataUri);
+            logStep(`  uploaded live screenshot (${ph}) from ${page.url().slice(0, 80)}`);
           } catch {
-            logStep(`  screenshot upload failed for ${ph}`);
+            logStep(`  live screenshot failed for ${ph}`);
           }
         }
       }

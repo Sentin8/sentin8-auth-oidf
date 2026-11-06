@@ -56,6 +56,14 @@ bridge), not the temporary HTML login page (`/oauth/login`).
 └─────────────┘                         └──────────────────┘
 ```
 
+Runner contract (the duplicate-slice rule): a plan may list the SAME
+`testModule` more than once under different variant slices (the HAIP
+plan's `vci_credential_encryption=plain` + `=encrypted` entries) - the
+runner create passes EACH plan entry's OWN `modules[].variant` dict to
+`POST /api/runner?variant=<json>` (empty body). A name-keyed variant
+map collapses the duplicates to the last entry's slice and the sibling
+stays PENDING at the plan gate.
+
 ## Layout
 
 | Path | Role |
