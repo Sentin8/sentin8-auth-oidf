@@ -518,48 +518,124 @@ async function runModuleOnPage(
     }
     // The rotate-keys operator action (the two-phase
     // oidcc-server-rotate-keys module): when the runner log carries the
-    // 'Please rotate' instruction, force a platform key rotation
-    // (CLI-signed internal rotate) and RESUME the runner with the
-    // suite's start action (POST /api/runner/<instance>). Phase B then
-    // The rotate-keys operator action (the two-phase
-    // oidcc-server-rotate-keys module): when the runner log carries the
-    // 'Please rotate' instruction, force a platform key rotation
-    // (CLI-signed internal rotate) and RESUME the runner with the
-    // suite's start action (POST /api/runner/<instance>). Phase B then
-    // fetches the JWKS again and finds the new key.
+    // 'Please rotate' instruction, force a platform key rotation and
+    // RESUME the runner with the suite's start action
+    // (POST /api/runner/<instance>). Phase B then fetches the JWKS
+    // again and finds the new key.
     //
-    // CONFFIX-1 (honest reporting): a FAILED rotation (e.g. the
-    // operator CLI credentials are missing/expired) must NOT silently
-    // resume phase B - the module would land a hollow FAILED ('no new
-    // keys') and the campaign would blame the wrong layer. Surface the
-    // operator action loudly and throw (the spec's per-module gate
-    // then reports the real cause: run 'sentin8-cli signin').
-    if (!rotateCompleted.has(runnerId)) {
-      const log = await suiteApi.getLog(runnerId);
-      const needsRotate = log.some(
-        (e: { msg?: string }) => (e.msg ?? '').includes('Please rotate the keys'),
-      );
-      if (needsRotate) {
-        rotateCompleted.add(runnerId);
-        try {
-          const { execFileSync } = await import('node:child_process');
-          const cli = '/home/hamid/dev/sentin8.new/sentin8/sentin8-cli/target/release/sentin8-cli';
-          execFileSync(cli, ['call', 'auth', 'POST', '/v1/internal/keys/rotate', '--body', '{"force":true}'], {
-            stdio: 'pipe',
-            timeout: 60_000,
+    // CONFFIX-1 (standards-based rotation): the platform key rotation is
+    // the RFC 8628 DEVICE-FLOW grant carried out by the certification
+    // tenant's own user - the harness signs in as cert-user (the same
+    // POST /v1/sign-in the CIBA hook uses), drives the device approval
+    // (POST /device/verify - the ONLY legitimate approval path),
+    // exchanges for a Bearer token, and calls the rotation endpoint.
+    // The endpoint's admin:write scope gate is Shield-enforced at auth;
+    // the cert user's role carries it (the old operator-CLI path was a
+    // session-less external dependency that broke the campaign). A
+    // FAILED rotation throws loudly (the module must not land a hollow
+    // FAILED 'no new keys' - the cause is visible in the error).
+    {
+        const log = await suiteApi.getLog(runnerId);
+        const needsRotate = log.some(
+            (e: { msg?: string }) => (e.msg ?? '').includes('Please rotate the keys'),
+        );
+        if (needsRotate && !rotateCompleted.has(runnerId)) {
+            rotateCompleted.add(runnerId);
+            try {
+          const { certUser } = await import('./env.js');
+          const user = certUser();
+          const base = certAuthBase;
+          // (1) Sign in as the cert user (cookie token).
+          const signIn = await fetch(`${base}/v1/sign-in`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: user.email, password: user.password }),
           });
-          logStep('  OP keys rotated (force) - resuming rotate-keys phase B');
+          if (!signIn.ok) {
+            throw new Error(`cert-user sign-in failed: HTTP ${signIn.status}`);
+          }
+          const signinBody = (await signIn.json()) as { token?: string };
+          const approveBearer = signinBody.token ?? '';
+          // (2) Request the device code (sentin8-cli's registered client).
+          const devResp = await fetch(`${base}/oauth/device`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              client_id: 'sentin8-cli',
+              scope: 'sentin8:auth:admin:write',
+              audience: 'sentin8',
+            }),
+          });
+          if (!devResp.ok) {
+            throw new Error(`device authorization failed: HTTP ${devResp.status}`);
+          }
+          const dev = (await devResp.json()) as {
+            device_code: string;
+            user_code: string;
+            interval?: number;
+          };
+          // (3) The user approves via the device-verify endpoint (the
+          // RFC 8628 3.3 approval contract - Bearer session).
+          const verify = await fetch(`${base}/device/verify`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${approveBearer}`,
+            },
+            body: JSON.stringify({ user_code: dev.user_code, action: 'approve' }),
+          });
+          if (!verify.ok) {
+            throw new Error(`device approval failed: HTTP ${verify.status}`);
+          }
+          // (4) Poll the token endpoint for the approved grant.
+          const tokenUrl = `${base}/oauth/token`;
+          const deadline = Date.now() + 90_000;
+          let bearer = '';
+          while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, dev.interval ? dev.interval * 1000 : 5_000));
+            const tok = await fetch(tokenUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+                device_code: dev.device_code,
+                client_id: 'sentin8-cli',
+              }),
+            });
+            if (tok.ok) {
+              const j = (await tok.json()) as { access_token?: string };
+              bearer = j.access_token ?? '';
+              break;
+            }
+          }
+          if (!bearer) {
+            throw new Error('device-flow token exchange did not complete');
+          }
+          // (5) The rotation call itself (the admin:write-gated endpoint).
+          const rot = await fetch(`${base}/v1/internal/keys/rotate`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${bearer}`,
+            },
+            body: JSON.stringify({ force: true }),
+          });
+          if (!rot.ok) {
+            const body = await rot.text();
+            throw new Error(`key rotation endpoint rejected: HTTP ${rot.status} ${body.slice(0, 120)}`);
+          }
+          logStep('  OP keys rotated (device-flow cert-user) - resuming rotate-keys phase B');
         } catch (e) {
           logStep(`  key rotate failed: ${String(e).slice(0, 200)}`);
           throw new Error(
-            `oidcc-server-rotate-keys operator action failed - the platform key rotation CLI call could not authenticate. ` +
-            `Run 'sentin8-cli signin' (valid operator credentials) and re-run the family. Cause: ${String(e).slice(0, 160)}`,
+            `oidcc-server-rotate-keys operator action failed - the RFC 8628 device-flow rotation ` +
+            `could not complete (the cert user's session/device grant). Cause: ${String(e).slice(0, 160)}`,
           );
         }
         const resumed = await suiteApi.resumeRunner(runnerId);
         logStep(`  rotate-keys phase B resumed: ${resumed}`);
         await page.waitForTimeout(2_000);
-      }
+        }
     }
     // The CIBA approval hook: drive the OP's assisted-login page once,
     // as the authenticating user (sign-in bridge + Confirm press).
