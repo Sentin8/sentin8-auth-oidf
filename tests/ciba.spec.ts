@@ -111,7 +111,7 @@ test.beforeAll(async ({ browser }) => {
   suiteApi = new SuiteApi();
 });
 
-test('FAPI CIBA ID1 - run every module to terminal, zero-warning green', async ({ browser }) => {
+test('FAPI CIBA ID1 - run every module to terminal', async ({ browser }) => {
   test.setTimeout(7_200_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);

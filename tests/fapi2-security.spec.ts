@@ -189,7 +189,7 @@ test.afterAll(async () => {
   if (planId) writeFileSync(join(resultsDir(), 'fapi2-security-plan.txt'), planId);
 });
 
-test('FAPI2 Security Profile - run every module-variant to terminal, zero-warning green', async ({ browser }) => {
+test('FAPI2 Security Profile - run every module-variant to terminal', async ({ browser }) => {
   test.setTimeout(7_200_000);
   // Singles filter (same contract as oidc-basic.spec.ts): OIDF_MODULES=a,b →
   // only those module names run (proves a targeted fix without the full cell).

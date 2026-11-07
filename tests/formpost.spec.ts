@@ -27,7 +27,7 @@ const planIds: string[] = [];
 
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - Form Post OP (zero-warning)',
+  description: 'Sentin8 auth certification run - Form Post OP',
   server: { discoveryUrl: certDiscoveryUrl() },
 };
 
@@ -69,7 +69,7 @@ test.beforeAll(async ({ browser }) => {
   await SuiteApi.waitAuthReady();
   suiteApi = new SuiteApi();
   logStep('creating plans: formpost (basic + hybrid + implicit)');
-  const baseVariant = { server_metadata: 'discovery', client_registration: 'static_client' };
+  const baseVariant = { client_registration: 'static_client' };
   // The THREE plans (the Form Post OP profile covers all three).
   const basicPlan = await suiteApi.createPlan(
     'oidcc-formpost-basic-certification-test-plan',
@@ -81,14 +81,14 @@ test.beforeAll(async ({ browser }) => {
   const hybridPlan = await suiteApi.createPlan(
     'oidcc-formpost-hybrid-certification-test-plan',
     config,
-    { ...baseVariant, response_type: 'code id_token' },
+    baseVariant,
   );
   planIds.push(hybridPlan.id);
   logStep(`hybrid plan ${hybridPlan.id}: ${hybridPlan.modules.length} modules`);
   const implicitPlan = await suiteApi.createPlan(
     'oidcc-formpost-implicit-certification-test-plan',
     config,
-    { ...baseVariant, response_type: 'id_token' },
+    baseVariant,
   );
   planIds.push(implicitPlan.id);
   logStep(`implicit plan ${implicitPlan.id}: ${implicitPlan.modules.length} modules`);
@@ -101,7 +101,7 @@ test.afterAll(async () => {
   if (planIds.length > 0) writeFileSync(join(resultsDir(), 'formpost-plans.txt'), planIds.join('\n'));
 });
 
-test('Form Post OP - run every module to terminal, zero-warning green', async ({ browser }) => {
+test('Form Post OP - run every module to terminal', async ({ browser }) => {
   test.setTimeout(3_600_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);

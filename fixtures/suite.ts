@@ -154,6 +154,15 @@ export function standardBrowserAutomation(): BrowserAutomationEntry[] {
           match: `${authHost}/oauth/logout*`,
           commands: [],
         },
+        {
+          task: 'Session Verify',
+          // OIDC Session Management (the Session-OP trio): the suite's
+          // OP-iframe holder page (/test/a/<alias>/session_verify) loads
+          // OUR check_session_iframe and postMessages the state triple -
+          // the page completes on its own (the shim answers via fetch).
+          match: `https://*/test/a/${CONFORMANCE_ALIAS}/session_verify*`,
+          commands: [],
+        },
       ],
     },
   ];
@@ -203,6 +212,15 @@ export function denyBrowserAutomation(): BrowserAutomationEntry[] {
         {
           task: 'Logout Landing',
           match: `${authHost}/oauth/logout*`,
+          commands: [],
+        },
+        {
+          task: 'Session Verify',
+          // OIDC Session Management (the Session-OP trio): the suite's
+          // OP-iframe holder page (/test/a/<alias>/session_verify) loads
+          // OUR check_session_iframe and postMessages the state triple -
+          // the page completes on its own (the shim answers via fetch).
+          match: `https://*/test/a/${CONFORMANCE_ALIAS}/session_verify*`,
           commands: [],
         },
       ],

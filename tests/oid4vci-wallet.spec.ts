@@ -190,7 +190,7 @@ test.afterAll(async () => {
   if (planId) writeFileSync(join(resultsDir(), 'oid4vci-wallet-plan.txt'), planId);
 });
 
-test('OID4VCI Wallet - run every module-variant to terminal, zero-warning green', async ({ browser }) => {
+test('OID4VCI Wallet - run every module-variant to terminal', async ({ browser }) => {
   test.setTimeout(1_800_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);

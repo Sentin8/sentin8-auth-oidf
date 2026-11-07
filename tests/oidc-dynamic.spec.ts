@@ -48,7 +48,7 @@ test.afterAll(async () => {
   if (planId) writeFileSync(join(resultsDir(), 'oidc-dynamic-plan.txt'), planId);
 });
 
-test('OIDC Core Dynamic OP - run every module-variant to terminal, zero-warning green', async ({ browser }) => {
+test('OIDC Core Dynamic OP - run every module-variant to terminal', async ({ browser }) => {
   test.setTimeout(1_800_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);

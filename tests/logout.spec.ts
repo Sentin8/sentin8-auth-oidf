@@ -26,7 +26,7 @@ const planIds: string[] = [];
 
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
- description: 'Sentin8 auth certification run - OIDC Logout ( zero-warning)',
+ description: 'Sentin8 auth certification run - OIDC Logout',
   server: { discoveryUrl: certDiscoveryUrl() },
 };
 
@@ -99,7 +99,7 @@ test.afterAll(async () => {
   if (planIds.length > 0) writeFileSync(join(resultsDir(), 'logout-plans.txt'), planIds.join('\n'));
 });
 
-test('OIDC Logout - run every module to terminal, zero-warning green', async ({ browser }) => {
+test('OIDC Logout - run every module to terminal', async ({ browser }) => {
   test.setTimeout(1_800_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);

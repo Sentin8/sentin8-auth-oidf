@@ -25,7 +25,7 @@ const planIds: string[] = [];
 
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - Session/3rdparty/Backchannel OP (zero-warning)',
+  description: 'Sentin8 auth certification run - Session/3rdparty/Backchannel OP',
   server: { discoveryUrl: certDiscoveryUrl() },
 };
 
@@ -68,10 +68,22 @@ test.beforeAll(async ({ browser }) => {
   await SuiteApi.waitAuthReady();
   suiteApi = new SuiteApi();
   logStep('creating plans: session-management + 3rdparty-init-login + backchannel-rp-initiated-logout');
-  const baseVariant = { server_metadata: 'discovery', client_registration: 'static_client' };
+  // The plans PIN server_metadata on their discovery entries - passing
+  // it ALSO 400s ("Variant ... already sets this variant"). Only the
+  // UNPINNED axes ride the create (client_registration for the
+  // session/backchannel static cells; the 3rdparty plan pins
+  // dynamic_client registration on its modules - the create rides NONE
+  // of the axes it pins... the suite matches the variant EXACTLY at
+  // module level; a user-set value on a pinned axis rejects).
+  const baseVariant = { response_type: 'code', client_registration: 'static_client' };
   const plans = [
     ['oidcc-session-management-certification-test-plan', baseVariant],
-    ['oidcc-3rdparty-init-login-certification-test-plan', { server_metadata: 'discovery', client_registration: 'dynamic_client' }],
+    // The 3rd-party plan's modules pin client_registration=dynamic_client
+    // + the base OIDC axes' response_type requirement rides the 3p
+    // module too (it extends the shared base).
+    // The plan pins dynamic_client registration on its modules - the
+    // create carries ONLY the free axis (response_type).
+    ['oidcc-3rdparty-init-login-certification-test-plan', { response_type: 'code' }],
     ['oidcc-backchannel-rp-initiated-logout-certification-test-plan', baseVariant],
   ] as const;
   for (const [planName, variant] of plans) {
@@ -88,7 +100,7 @@ test.afterAll(async () => {
   if (planIds.length > 0) writeFileSync(join(resultsDir(), 'sessionmgmt-plans.txt'), planIds.join('\n'));
 });
 
-test('Session + 3rdparty + Backchannel OP - run every module to terminal, zero-warning green', async ({ browser }) => {
+test('Session + 3rdparty + Backchannel OP - run every module to terminal', async ({ browser }) => {
   test.setTimeout(3_600_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);

@@ -31,7 +31,7 @@ const planIds: string[] = [];
 
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - OID4VP verifier (zero-warning)',
+  description: 'Sentin8 auth certification run - OID4VP verifier',
   server: { discoveryUrl: certDiscoveryUrl() },
 };
 
@@ -104,7 +104,7 @@ test.afterAll(async () => {
   if (planIds.length > 0) writeFileSync(join(resultsDir(), 'oid4vp-plans.txt'), planIds.join('\n'));
 });
 
-test('OID4VP verifier - run every module to terminal, zero-warning green', async ({ browser }) => {
+test('OID4VP verifier - run every module to terminal', async ({ browser }) => {
   test.setTimeout(3_600_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);

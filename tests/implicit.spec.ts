@@ -29,7 +29,7 @@ const planIds: string[] = [];
 
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
-  description: 'Sentin8 auth certification run - OIDC Implicit (zero-warning)',
+  description: 'Sentin8 auth certification run - OIDC Implicit',
   server: { discoveryUrl: certDiscoveryUrl() },
 };
 
@@ -62,15 +62,17 @@ test.beforeAll(async ({ browser }) => {
   await SuiteApi.waitAuthReady();
   suiteApi = new SuiteApi();
   logStep('creating plans: implicit');
-  for (const respType of ['id_token', 'id_token token']) {
-    const plan = await suiteApi.createPlan(
-      'oidcc-implicit-certification-test-plan',
-      config,
-      { response_type: respType, client_registration: 'static_client' },
-    );
-    planIds.push(plan.id);
-    logStep(`[response_type=${respType}] plan ${plan.id}: ${plan.modules.length} modules`);
-  }
+  // The implicit plan PINS response_type on its entries - the plan's
+  // own module-variant matrix (id_token / id_token token) emerges from
+  // the create with NO user-set response_type (the suite expands the
+  // two pins automatically). Passing it 400s ("already sets").
+  const plan = await suiteApi.createPlan(
+    'oidcc-implicit-certification-test-plan',
+    config,
+    { client_registration: 'static_client', response_mode: 'default' },
+  );
+  planIds.push(plan.id);
+  logStep(`plan ${plan.id}: ${plan.modules.length} module-variants`);
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   page = await ctx.newPage();
 });
@@ -80,7 +82,7 @@ test.afterAll(async () => {
   if (planIds.length > 0) writeFileSync(join(resultsDir(), 'implicit-plans.txt'), planIds.join('\n'));
 });
 
-test('OIDC Implicit - run every module to terminal, zero-warning green', async ({ browser }) => {
+test('OIDC Implicit - run every module to terminal', async ({ browser }) => {
   test.setTimeout(3_600_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);

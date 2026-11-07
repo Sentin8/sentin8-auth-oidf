@@ -89,7 +89,7 @@ test.afterAll(async () => {
   if (planId) writeFileSync(join(resultsDir(), 'oidc-config-plan.txt'), planId);
 });
 
-test('OIDC Core Config OP - run every module to terminal, zero-warning green', async ({ browser }) => {
+test('OIDC Core Config OP - run every module to terminal', async ({ browser }) => {
   test.setTimeout(1_800_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);
