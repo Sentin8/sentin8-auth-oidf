@@ -36,6 +36,10 @@ declare -A FAMILY=(
   [fapi2-signing]="cert-f2m:sentin8-f2m:fapi_2_message_signing"
   [vci-issuer]="cert-vci:sentin8-vci:vci"
   [vci-haip]="cert-haip:sentin8-haip:vci_haip"
+  [implicit]="cert-imp:sentin8-imp:standard"
+  [formpost]="cert-fp:sentin8-fp:formpost"
+  [sessionmgmt]="cert-sm:sentin8-sm:sm_session"
+  [oid4vp]="cert-vp:sentin8-vp:vp"
 )
 declare -A SPECS=(
   [smoke]="tests/smoke.spec.ts"
@@ -49,8 +53,12 @@ declare -A SPECS=(
   [fapi2-signing]="tests/fapi2-message-signing.spec.ts"
   [vci-issuer]="tests/oid4vci-issuer.spec.ts"
   [vci-haip]="tests/oid4vci-haip.spec.ts"
+  [implicit]="tests/implicit.spec.ts"
+  [formpost]="tests/formpost.spec.ts"
+  [sessionmgmt]="tests/sessionmgmt.spec.ts"
+  [oid4vp]="tests/oid4vp.spec.ts"
 )
-ORDER=(smoke oidc-basic oidc-config oidc-dynamic logout ciba fapi1 fapi2 fapi2-signing vci-issuer vci-haip)
+ORDER=(smoke oidc-basic oidc-config oidc-dynamic logout ciba fapi1 fapi2 fapi2-signing vci-issuer vci-haip implicit formpost sessionmgmt oid4vp)
 
 requested=("$@")
 if [ ${#requested[@]} -eq 0 ] || [ -z "${requested[0]:-}" ]; then

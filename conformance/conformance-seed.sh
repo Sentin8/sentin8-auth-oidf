@@ -230,6 +230,22 @@ case "$PROFILE" in
     FLAGS='"require_par":true,"require_jarm":true,"require_dpop":false,"require_iss":true,"require_mtls":true,"require_http_signatures":false,"require_jwt_introspection":false';;
   fapi_ciba)
     FLAGS='"require_par":false,"require_jarm":false,"require_dpop":false,"require_iss":true,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
+  formpost)
+    # The Form Post OP profile (auth DESIGN 9a.25): the plain OIDC
+    # posture - the RESPONSE MODE (form_post) is the family's distinction,
+    # not a flag set. The env rides the same RS256 signing family as the
+    # standard family.
+    FLAGS='"require_par":false,"require_jarm":false,"require_dpop":false,"require_iss":false,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
+  sm_session)
+    # The Session-OP trio (auth DESIGN 9a.26): checks-session needs NO
+    # flags - the check_session_iframe + the backchannel fanout ride the
+    # handler paths.
+    FLAGS='"require_par":false,"require_jarm":false,"require_dpop":false,"require_iss":false,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
+  vp)
+    # The OID4VP verifier family (auth DESIGN 9a.27): the verifier
+    # requests ride the eudi_wallet connection + the issuance-chain x5c
+    # (the HAIP plan's trust anchor). The plain OIDC token posture.
+    FLAGS='"require_par":false,"require_jarm":false,"require_dpop":false,"require_iss":false,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
   vci)
     # OID4VCI issuer cells: the suite's vci profile drives PAR-pushed
     # authorization (the credential offer's pre-authorized codes ride the
@@ -419,7 +435,7 @@ PYHAIPPEM
   HAIP_LEAF_DER_B64_EXPORTED="$HAIP_LEAF_DER_B64"
   HAIP_ISSUER_XY_EXPORTED="$(echo "$HAIP_ISSUANCE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['kid'], d['x'], d['y'])")"
 fi
-ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
+PROFILE_PUT_OUT="$(ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
     \"scope\":\"env\",
     \"org_id\":\"$ORG_ID\",
     \"env_id\":\"$ENV_ID\",
@@ -429,7 +445,12 @@ ccall auth PUT /v1/security-profile --env "$ENV_ID" --body "{
     \"signing_alg\":\"$ALG\",
     \"refresh_rotation\":$ROTATION
     $ATTESTATION_FIELDS
-  }" && log "profile=$PROFILE set ({$FLAGS}, $ALG, rotation=$ROTATION)"
+  }")"
+if [ -z "$PROFILE_PUT_OUT" ]; then
+  log "FATAL: the security-profile PUT FAILED for profile=$PROFILE env=$ENV_ID - fix the API error (the seed must never pass-1 silently: a missed profile row makes every module of the family run against the WRONG posture)"
+  exit 1
+fi
+log "profile=$PROFILE set ({$FLAGS}, $ALG, rotation=$ROTATION)"
 
 # ── 2c. TLS warm-up (runbook §5): the suite's Java client makes
 # single-shot fetches with a short socket timeout; a cold auth instance

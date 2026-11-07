@@ -143,7 +143,7 @@ function issuerJwksInline(): unknown {
 
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
- description: 'Sentin8 auth certification run - OID4VCI Wallet ( warning-zero)',
+ description: 'Sentin8 auth certification run - OID4VCI Wallet',
   server: { discoveryUrl: certDiscoveryUrl(), jwks: { keys: [] } },
   credential: seeded.signingJwk ? { signing_jwk: seeded.signingJwk } : {},
   vci: {
