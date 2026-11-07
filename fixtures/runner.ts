@@ -369,8 +369,20 @@ async function runModuleOnPage(
       );
       if (!matches) {
         if (!fromPage) {
+          // NO task matched - STILL VISIT the exposed url (the suite's
+          // UI runner would navigate the user's browser there; suite
+          // pages like the OP-iframe holder (session_verify) and the
+          // error-page placeholders complete once LOADED - the visit
+          // itself is the drive).
           seenUrls.add(u);
-          logStep(`  NO BROWSER TASK MATCHES ${u.slice(0, 90)} (the module stalls without it)`);
+          driveCounts.set(u, drives + 1);
+          logStep(`  plain visit (no task match) ${u.slice(0, 90)}`);
+          const navP = page.waitForLoadState('domcontentloaded').catch(() => {});
+          await page
+            .goto(u, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+            .catch((e2) => logStep(`  goto failed: ${(e2 as Error).message}`));
+          await navP;
+          await suiteApi.markVisited(runnerId, u).catch(() => {});
         }
         continue;
       }
@@ -398,7 +410,18 @@ async function runModuleOnPage(
       }
       const handled = await driveBrowserBlock(page, browserBlock, u, drives + 1);
       if (!handled) {
-        logStep(`  NO BROWSER TASK MATCHES ${u.slice(0, 90)} (the module stalls without it)`);
+        // NO task matched - still VISIT the exposed url (the suite's UI
+        // runner would navigate the user's browser there; some suite
+        // pages complete on their own once LOADED - the OP-iframe
+        // holder (session_verify), the error-page placeholders).
+        seenUrls.add(u);
+        driveCounts.set(u, drives + 1);
+        logStep(`  plain visit (no task match) ${u.slice(0, 90)}`);
+        const nav2 = page.waitForLoadState('domcontentloaded').catch(() => {});
+        await page
+          .goto(u, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+          .catch((e) => logStep(`  goto failed: ${(e as Error).message}`));
+        await nav2;
       } else if (fromPage) {
         logStep(`  SPA-internal task driven for ${u.slice(0, 80)}`);
       }

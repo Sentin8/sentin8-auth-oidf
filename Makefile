@@ -84,8 +84,33 @@ ciba: FAMILY_ENV := cert-ciba
 ciba: ## FAPI-CIBA poll + ping
 	@$(call with_family_env,pnpm run test:ciba)
 
-results: ## Show the latest results JSON
-	@cat results/oidf-results.json 2>/dev/null | head -50
+oid4vci-wallet: FAMILY_ENV := cert-vci
+oid4vci-wallet: ## OID4VCI 1.0 Wallet plan
+	@$(call with_family_env,pnpm run test:oid4vci-wallet)
+
+oid4vci-haip: FAMILY_ENV := cert-haip
+oid4vci-haip: ## OID4VCI 1.0 Issuer HAIP (client attestation)
+	@$(call with_family_env,pnpm run test:oid4vci-haip)
+
+implicit: FAMILY_ENV := cert-imp
+implicit: ## OIDC Core Implicit OP (2 pinned response_type cells)
+	@$(call with_family_env,pnpm run test:implicit)
+
+hybrid: FAMILY_ENV := cert-hyb
+hybrid: ## OIDC Core Hybrid OP (3 pinned response_type entries)
+	@$(call with_family_env,pnpm run test:hybrid)
+
+formpost: FAMILY_ENV := cert-fp
+formpost: ## Form Post OP (the 3-plan form_post profile)
+	@$(call with_family_env,pnpm run test:formpost)
+
+sessionmgmt: FAMILY_ENV := cert-sm
+sessionmgmt: ## Session + 3rdparty + Back-Channel OP trio
+	@$(call with_family_env,pnpm run test:sessionmgmt)
+
+oid4vp: FAMILY_ENV := cert-vp
+oid4vp: ## OID4VP verifier (HAIP + plain plans)
+	@$(call with_family_env,pnpm run test:oid4vp)
 
 clean: ## Remove exported results + scratch/run dirs (.run .run/logs .tmp)
 	@rm -rf results .run .run/logs .tmp

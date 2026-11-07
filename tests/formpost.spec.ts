@@ -117,7 +117,12 @@ test('Form Post OP - run every module to terminal', async ({ browser }) => {
         continue;
       }
       const run = await runModule(suiteApi, browser, cellPlanId, m.testModule,
-        { ...config, browser: browserAutomationFor(m.testModule) });
+        { ...config, browser: browserAutomationFor(m.testModule) },
+        600_000,
+        // The plan's pinned axes ride the runner create (the response_mode
+        // cell axis selects the module instance - without it the create
+        // 500s "Missing value for required variant parameter").
+        (m.variant ?? undefined) as Record<string, string> | undefined);
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
       expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
       if (run.warnings.length > 0) {

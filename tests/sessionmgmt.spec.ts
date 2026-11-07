@@ -14,7 +14,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { SuiteApi, ACCEPTABLE, standardBrowserAutomation, browserAutomationFor, type SuiteTestConfig } from '../fixtures/suite.js';
 import { runModule, planResults } from '../fixtures/runner.js';
-import { certDiscoveryUrl, suiteCallback, suiteCibaNotification, CONFORMANCE_ALIAS, resultsDir, seedOutPath } from '../fixtures/env.js';
+import { certDiscoveryUrl, suiteCallback, CONFORMANCE_ALIAS, resultsDir, seedOutPath } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -54,7 +54,6 @@ function loadSeededClients(): void {
       scope: 'openid profile email phone address offline_access',
       redirect_uri: suiteCallback(),
       post_logout_redirect_uris: [routes.postLogout],
-      backchannel_logout_uri: routes.backchannelLogout,
       token_endpoint_auth_method: 'client_secret_basic',
     };
   }
@@ -71,20 +70,32 @@ test.beforeAll(async ({ browser }) => {
   // The plans PIN server_metadata on their discovery entries - passing
   // it ALSO 400s ("Variant ... already sets this variant"). Only the
   // UNPINNED axes ride the create (client_registration for the
-  // session/backchannel static cells; the 3rdparty plan pins
-  // dynamic_client registration on its modules - the create rides NONE
-  // of the axes it pins... the suite matches the variant EXACTLY at
+  // session static cells; the 3rdparty plan pins dynamic_client
+  // registration on its modules - the create carries ONLY the free
+  // axis (response_type): the suite matches the variant EXACTLY at
   // module level; a user-set value on a pinned axis rejects).
   const baseVariant = { response_type: 'code', client_registration: 'static_client' };
+  // The Back-Channel OP module registers ITS OWN client (dynamic):
+  // the suite's DCR request carries backchannel_logout_uri +
+  // backchannel_logout_session_required:true (OIDC Back-Channel
+  // Logout 1.0 §2.2 - the RP metadata surface the plan certifies).
+  // The fanout target therefore reaches the OP through the STANDARD
+  // registration surface, exactly as a real RP would register - the
+  // plan's config `client` object is only consumed by the SUITE (its
+  // own bc receiver) and never reaches the OP (GetStaticClientConfiguration
+  // reads it verbatim), so a static client here would leave the OP
+  // with no bc target to POST to (the module stalls WAITING for the
+  // back-channel request). The session_clients binding (auth DESIGN
+  // 9a.26) keeps the SM run's fanout empty: the SM module's client is
+  // not bc-registered, so a stray POST can never reach it.
+  const bcVariant = { response_type: 'code', client_registration: 'dynamic_client' };
   const plans = [
     ['oidcc-session-management-certification-test-plan', baseVariant],
     // The 3rd-party plan's modules pin client_registration=dynamic_client
     // + the base OIDC axes' response_type requirement rides the 3p
     // module too (it extends the shared base).
-    // The plan pins dynamic_client registration on its modules - the
-    // create carries ONLY the free axis (response_type).
     ['oidcc-3rdparty-init-login-certification-test-plan', { response_type: 'code' }],
-    ['oidcc-backchannel-rp-initiated-logout-certification-test-plan', baseVariant],
+    ['oidcc-backchannel-rp-initiated-logout-certification-test-plan', bcVariant],
   ] as const;
   for (const [planName, variant] of plans) {
     const plan = await suiteApi.createPlan(planName, config, variant);

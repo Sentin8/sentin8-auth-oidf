@@ -23,6 +23,10 @@ Certification campaign specs (one per profile plan):
 - OIDC Core Basic OP
 - OIDC Core Config OP
 - OIDC Core Dynamic OP
+- OIDC Core Implicit OP
+- OIDC Core Hybrid OP
+- Form Post OP (the 3-plan form_post profile)
+- Session Management + 3rd-Party-Initiated Login + Back-Channel OP
 - FAPI 2 Security Profile
 - FAPI 2 Message Signing
 - FAPI 1 Advanced
@@ -31,6 +35,7 @@ Certification campaign specs (one per profile plan):
 - OID4VCI 1.0 Final Issuer
 - OID4VCI 1.0 Final Wallet
 - OID4VCI 1.0 Issuer HAIP
+- OID4VP Verifier (HAIP + plain)
 
 Non-campaign spec:
 
@@ -74,6 +79,10 @@ stays PENDING at the plan gate.
 | `tests/oidc-basic.spec.ts` | OIDC Core Basic OP (35 modules) - the reference profile suite |
 | `tests/oidc-config.spec.ts` | OIDC Core Config OP - discovery completeness (the same static seeded clients as Basic) |
 | `tests/oidc-dynamic.spec.ts` | OIDC Core Dynamic OP - RFC 7591 DCR + WebFinger (the suite registers its own clients) |
+| `tests/implicit.spec.ts` | OIDC Core Implicit OP - the 2 pinned fragment cells (id_token / id_token token) over cert-imp |
+| `tests/hybrid.spec.ts` | OIDC Core Hybrid OP - the 3 pinned fragment cells (code id_token / code token / code id_token token) over cert-hyb |
+| `tests/formpost.spec.ts` | Form Post OP - the formpost suite plans (basic + hybrid + implicit response modes) over cert-fp |
+| `tests/sessionmgmt.spec.ts` | Session Management + 3rd-Party-Initiated Login + Back-Channel OP trio over cert-sm (the BC module DCRs its own bc-registered client) |
 | `tests/fapi2-security.spec.ts` | FAPI 2 Security Profile (PAR + DPoP + JARM) |
 | `tests/fapi2-message-signing.spec.ts` | FAPI 2 Message Signing (HTTP signatures + signed introspection) |
 | `tests/fapi1-advanced.spec.ts` | FAPI 1 Advanced (mTLS + JAR + PAR) |
@@ -82,6 +91,7 @@ stays PENDING at the plan gate.
 | `tests/oid4vci-issuer.spec.ts` | OID4VCI 1.0 Final Issuer - credential endpoint family (private_key_jwt + DPoP, SD-JWT VC; the suite acts as the wallet) |
 | `tests/oid4vci-wallet.spec.ts` | OID4VCI 1.0 Final Wallet - credential-offer front channel + authorization-code grant (the suite acts as the wallet against our issuer) |
 | `tests/oid4vci-haip.spec.ts` | OID4VCI 1.0 Issuer HAIP - client-attestation auth (`OAuth-Client-Attestation` + `OAuth-Client-Attestation-PoP`) |
+| `tests/oid4vp.spec.ts` | OID4VP verifier - the HAIP verifier plan + the plain plan over cert-vp |
 | `tests/smoke.spec.ts` | Harness boot check - one module end-to-end through the Flutter auth-ui (not a certification campaign) |
 | `results/` | Per-module logs + the campaign results JSON (gitignored) |
 
@@ -103,6 +113,11 @@ cd sentin8-auth-oidf
 make oidc-basic          # the Basic OP plan (35 modules)
 make oidc-config         # the Config OP plan (discovery completeness)
 make oidc-dynamic        # the Dynamic OP plan (DCR + WebFinger)
+make implicit           # the Implicit OP plan (2 pinned fragment cells)
+make hybrid             # the Hybrid OP plan (3 pinned fragment cells)
+make formpost           # the Form Post OP profile (3 plans over cert-fp)
+make sessionmgmt        # the Session/3rd-Party/Back-Channel OP trio
+make oid4vp             # the OID4VP verifier plans
 make oid4vci-issuer      # the VCI Issuer plan (SD-JWT VC)
 make fapi2 && make fapi1 && make ciba
 ```

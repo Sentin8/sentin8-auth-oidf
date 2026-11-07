@@ -617,6 +617,10 @@ echo "attestation_issuer(vciatt)=${ATTESTATION_ISSUER:-https://vci-attester.conf
 emit_client() { # emit_client <name> <json>
   echo "client_id($1)=$(jget "$2" client_id)" | tee -a "$SEED_OUT"
   echo "client_secret($1)=$(jget "$2" client_secret)" | tee -a "$SEED_OUT"
+  # RFC 7592 client-config token - the harness's registration
+  # surface for STATIC clients (the Back-Channel OP plan's
+  # backchannel_logout_uri PUT rides this; auth DESIGN 9a.26).
+  echo "registration_access_token($1)=$(jget "$2" registration_access_token)" | tee -a "$SEED_OUT"
 }
 # CIBA second client - the suite's AbstractFAPICIBAID1MultipleClient
 # family (signed-by-other-client / bad-iss / multiple hints) drives a

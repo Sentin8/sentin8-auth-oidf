@@ -62,14 +62,17 @@ test.beforeAll(async ({ browser }) => {
   await SuiteApi.waitAuthReady();
   suiteApi = new SuiteApi();
   logStep('creating plans: implicit');
-  // The implicit plan PINS response_type on its entries - the plan's
-  // own module-variant matrix (id_token / id_token token) emerges from
-  // the create with NO user-set response_type (the suite expands the
-  // two pins automatically). Passing it 400s ("already sets").
+  // The implicit plan PINS response_type (its two cells: id_token /
+  // id_token token), client_auth_type (client_secret_basic) AND
+  // response_mode (default) on its module entries - the suite expands
+  // the two pinned cells automatically and 400s on any user-set value
+  // for a pinned axis ("Variant ... already sets this variant"). The
+  // create carries ONLY the free axes: server_metadata (the module's
+  // discovery resolution) + client_registration.
   const plan = await suiteApi.createPlan(
     'oidcc-implicit-certification-test-plan',
     config,
-    { client_registration: 'static_client', response_mode: 'default' },
+    { server_metadata: 'discovery', client_registration: 'static_client' },
   );
   planIds.push(plan.id);
   logStep(`plan ${plan.id}: ${plan.modules.length} module-variants`);
@@ -98,7 +101,13 @@ test('OIDC Implicit - run every module to terminal', async ({ browser }) => {
         continue;
       }
       const run = await runModule(suiteApi, browser, cellPlanId, m.testModule,
-        { ...config, browser: browserAutomationFor(m.testModule) });
+        { ...config, browser: browserAutomationFor(m.testModule) },
+        600_000,
+        // The plan's pinned axes ride the runner create (the SAME
+        // module name exists in BOTH cells - response_type selects the
+        // cell; without it the create 500s "Missing value for required
+        // variant parameter: response_type").
+        m.variant ?? undefined);
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
       expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
       if (run.warnings.length > 0) {

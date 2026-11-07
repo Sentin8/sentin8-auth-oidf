@@ -18,6 +18,13 @@
     "test:fapi1": "playwright test tests/fapi1-advanced.spec.ts",
     "test:ciba": "playwright test tests/ciba.spec.ts",
     "test:oid4vci-issuer": "playwright test tests/oid4vci-issuer.spec.ts",
+    "test:oid4vci-wallet": "playwright test tests/oid4vci-wallet.spec.ts",
+    "test:oid4vci-haip": "playwright test tests/oid4vci-haip.spec.ts",
+    "test:implicit": "playwright test tests/implicit.spec.ts",
+    "test:hybrid": "playwright test tests/hybrid.spec.ts",
+    "test:formpost": "playwright test tests/formpost.spec.ts",
+    "test:sessionmgmt": "playwright test tests/sessionmgmt.spec.ts",
+    "test:oid4vp": "playwright test tests/oid4vp.spec.ts",
     "lint": "tsc --noEmit",
     "install-browsers": "playwright install chromium"
   },
