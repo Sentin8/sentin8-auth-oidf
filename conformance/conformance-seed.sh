@@ -553,20 +553,28 @@ DEVICE_JSON="$(dcr "cert-device" "\"grant_types\":[\"urn:ietf:params:oauth:grant
 # bc-authorize gate rejects the secret methods) - the client carries its
 # OWN EC P-256 key (the suite signs client assertions with the private
 # jwks; the assertion audience = the backchannel endpoint).
+#
+# CIBA client key = RSA-PS256 (the fapi2 cells' shape - auth DESIGN
+# 9a.16 (i)): the suite's FAPICIBAID1 RS256-negative modules gate on
+# keys[0].alg == 'PS256' of the plan config's client.jwks (suite source
+# JWKUtil.getAlgFromClientJwks reads ONLY the first key), and the server
+# verifies RSA+PS256 assertions (verify_with_jwk's ('RSA','PS256') arm).
+# An EC/ES256 client key makes those two modules SKIP - the 9a.10 no-skip
+# rule treats every skip as failed coverage. A two-key jwks cannot serve
+# both families: the suite's signer errors on >1 signature-use key, and
+# FAPICheckKeyAlgInClientJWKs fails setup for any sig key without an alg.
+# CIBA ID1 emits NO DPoP proofs (plain_fapi pre-authorization is empty),
+# so the client key only signs request objects + client assertions.
 CIBA_KEYS="$(python3 - <<'PYGEN'
 import base64, json
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.hazmat.primitives.asymmetric import rsa
 
-key = ec.generate_private_key(ec.SECP256R1())
-pub = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
-x = base64.urlsafe_b64encode(pub[1:33]).rstrip(b'=').decode()
-y = base64.urlsafe_b64encode(pub[33:65]).rstrip(b'=').decode()
-d = key.private_numbers().private_value.to_bytes(32, 'big')
-d_b64 = base64.urlsafe_b64encode(d).rstrip(b'=').decode()
+key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+rn = key.public_key().public_numbers()
+def _bn(v): return base64.urlsafe_b64encode(v.to_bytes((v.bit_length()+7)//8, 'big')).rstrip(b'=').decode()
 kid = 'ciba-key'
-private = {"kty": "EC", "kid": kid, "crv": "P-256", "x": x, "y": y, "d": d_b64, "alg": "ES256"}
-public = {"keys": [{"kty": "EC", "kid": kid, "use": "sig", "alg": "ES256", "crv": "P-256", "x": x, "y": y}]}
+private = {"kty": "RSA", "kid": kid, "n": _bn(rn.n), "e": _bn(rn.e), "d": _bn(key.private_numbers().d), "alg": "PS256"}
+public = {"keys": [{"kty": "RSA", "kid": kid, "use": "sig", "alg": "PS256", "n": _bn(rn.n), "e": _bn(rn.e)}]}
 print(json.dumps({"private": private, "public": public}))
 PYGEN
 )"
@@ -596,18 +604,14 @@ emit_client() { # emit_client <name> <json>
 # actually differ).
 CIBA2_KEYS="$(python3 - <<'PYGEN2'
 import base64, json
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.hazmat.primitives.asymmetric import rsa
 
-key = ec.generate_private_key(ec.SECP256R1())
-pub = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
-x = base64.urlsafe_b64encode(pub[1:33]).rstrip(b'=').decode()
-y = base64.urlsafe_b64encode(pub[33:65]).rstrip(b'=').decode()
-d = key.private_numbers().private_value.to_bytes(32, 'big')
-d_b64 = base64.urlsafe_b64encode(d).rstrip(b'=').decode()
+key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+rn = key.public_key().public_numbers()
+def _bn(v): return base64.urlsafe_b64encode(v.to_bytes((v.bit_length()+7)//8, 'big')).rstrip(b'=').decode()
 kid = 'ciba2-key'
-private = {"kty": "EC", "kid": kid, "crv": "P-256", "x": x, "y": y, "d": d_b64, "alg": "ES256"}
-public = {"keys": [{"kty": "EC", "kid": kid, "use": "sig", "alg": "ES256", "crv": "P-256", "x": x, "y": y}]}
+private = {"kty": "RSA", "kid": kid, "n": _bn(rn.n), "e": _bn(rn.e), "d": _bn(key.private_numbers().d), "alg": "PS256"}
+public = {"keys": [{"kty": "RSA", "kid": kid, "use": "sig", "alg": "PS256", "n": _bn(rn.n), "e": _bn(rn.e)}]}
 print(json.dumps({"private": private, "public": public}))
 PYGEN2
 )"

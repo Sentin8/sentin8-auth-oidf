@@ -6,9 +6,13 @@
 // Variant axes (the suite's FAPICIBAID1TestPlan): fapi_ciba_profile
 // (plain_fapi), client_auth_type (private_key_jwt), ciba_mode
 // (poll | ping), client_registration (static_client). The seed
-// registers cert-ciba with `private_key_jwt` + its own EC jwks under
-// the fapi_ciba posture (PAR off, iss on, ES256) and publishes the
-// private jwks to seed-out.
+// registers cert-ciba with `private_key_jwt` + its own RSA-PS256 jwks
+// under the fapi_ciba posture (PAR off, iss on) and publishes the
+// private jwks to seed-out. PS256 (not EC/ES256): the suite's two
+// RS256-negative modules gate on keys[0].alg == 'PS256' of the plan's
+// client.jwks and RUN that negative against a real RSA key - an EC key
+// makes them SKIP (violating the 9a.10 no-skip rule). The server side
+// verifies PS256 (§9a.16 (i)) and rejects the relabeled RS256 attempt.
 
 import { test, expect } from '@playwright/test';
 import { SuiteApi, standardBrowserAutomation, browserAutomationFor, type SuiteTestConfig } from '../fixtures/suite.js';
@@ -145,11 +149,10 @@ test('FAPI CIBA ID1 - run every module to terminal, zero-warning green', async (
           .map((e: { msg?: string }) => e.msg ?? '')
           .join(' | ');
         if (result === 'SKIPPED') {
-          if (!/requires RSA keys|alg in client configuration is 'ES256'|alg in client configuration is 'RS256'/i.test(skipMsg)) {
-            failures.push(`[SKIP-unexpected] ${m.testModule}: ${skipMsg}`);
-          } else {
-            logStep(`SKIP-SANCTIONED ${m.testModule} (ES256 client - suite-blessed)`);
-          }
+          // The client key is RSA-PS256 (the seed's ciba keygen) - the
+          // suite's RS256 negatives RUN; any skip is unexpected coverage
+          // loss (the 9a.10 no-skip rule).
+          failures.push(`[SKIP-unexpected] ${m.testModule}: ${skipMsg}`);
         } else {
           expect(result, `${m.testModule} must not fail/skip`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
         }
@@ -171,9 +174,10 @@ test('plan-level results are all acceptable', async () => {
   const failures: string[] = [];
   for (const planId of planIds) {
     const results = await planResults(suiteApi, planId);
-    // The ES256-client RS256 negatives are suite-sanctioned skips.
+    // The PS256 client key makes the RS256 negatives RUN - no skip
+    // sanction remains (the 9a.10 no-skip rule).
     const bad = [...results.entries()]
-      .filter(([m, r]) => r && !ACCEPTABLE.has(r) && !(r === 'SKIPPED' && /rs256/i.test(m)));
+      .filter(([m, r]) => r && !ACCEPTABLE.has(r));
     for (const [m, r] of bad) failures.push(`${m}: ${r}`);
   }
   expect(failures, `plan results failed:\n${failures.join('\n')}`).toEqual([]);
