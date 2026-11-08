@@ -57,6 +57,16 @@ function loadSeededClients(): void {
       redirect_uri: suiteCallback(),
       token_endpoint_auth_method: 'client_secret_post',
     } as SuiteTestConfig['client2'];
+    // The client_secret_post VARIANT module reads this DEDICATED key
+    // (the basic spec's own contract - the suite wants the key present
+    // even though the registration is shared).
+    config.client_secret_post = {
+      client_id: postId,
+      client_secret: postSecret,
+      scope: 'openid profile email phone address offline_access',
+      redirect_uri: suiteCallback(),
+      token_endpoint_auth_method: 'client_secret_post',
+    } as SuiteTestConfig['client2'];
   }
 }
 
@@ -69,7 +79,11 @@ test.beforeAll(async ({ browser }) => {
   await SuiteApi.waitAuthReady();
   suiteApi = new SuiteApi();
   logStep('creating plans: formpost (basic + hybrid + implicit)');
-  const baseVariant = { client_registration: 'static_client' };
+  // The plans PIN their response_type/client_auth_type/response_mode
+  // (the form_post mode) on the module entries - the create carries
+  // ONLY the free axes: server_metadata + client_registration (the
+  // same pinned-axes contract as the implicit spec).
+  const baseVariant = { server_metadata: 'discovery', client_registration: 'static_client' };
   // The THREE plans (the Form Post OP profile covers all three).
   const basicPlan = await suiteApi.createPlan(
     'oidcc-formpost-basic-certification-test-plan',

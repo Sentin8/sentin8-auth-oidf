@@ -562,8 +562,11 @@ done
 # id_token / id_token token and the hybrid cells request
 # code id_token / code token / code id_token token against the SAME
 # static client, and the formpost plan family re-uses the same cells
-# under the form_post response mode).
-HYBRID_RESPONSE_TYPES='\"response_types\":[\"code\",\"code id_token\",\"code token\",\"code id_token token\",\"id_token\",\"id_token token\"]'
+# under the form_post response mode). Double-quoted with escapes: the
+# value embeds into the dcr extra's escaped-JSON context as literal
+# double quotes (a single-quoted \" would land backslashes in the
+# body and the DCR rejects the malformed JSON).
+HYBRID_RESPONSE_TYPES="\"response_types\":[\"code\",\"code id_token\",\"code token\",\"code id_token token\",\"id_token\",\"id_token token\"]"
 case "$PROFILE" in
   implicit|hybrid|formpost) : ;;
   *) HYBRID_RESPONSE_TYPES="\"response_types\":[\"code\"]" ;;
