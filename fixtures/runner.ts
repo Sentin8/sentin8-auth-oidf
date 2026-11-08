@@ -325,6 +325,10 @@ async function runModuleOnPage(
   // placeholder still pending on the SECOND observation gets the image).
   const uploaded = new Set<string>();
   const landingSeen = new Set<string>();
+  // The OID4VP uriInputRequests drive ledger: one submit per submitUrl
+  // (the minted verifier request is single-use; re-submitting would
+  // deliver a fresh request the module never asked for).
+  const uriSubmitted = new Set<string>();
   // CIBA: the OP's out-of-band user approval. The suite only polls the
   // token endpoint; the authentication device = OUR harness. When the
   // runner log shows the backchannel response (auth_req_id), drive the
@@ -352,6 +356,56 @@ async function runModuleOnPage(
     // terminal modules accept nothing at all.
     const runner = status === 'WAITING' ? await suiteApi.getRunner(runnerId) : null;
     let urls: string[] = runner?.browser?.urls ?? [];
+    // The OID4VP verifier modules (the suite plays the WALLET): the
+    // runner parks WAITING with a `uriInputRequests` entry whose
+    // submitUrl is the suite's authorize stand-in - the operator pastes
+    // the verifier-under-test's `openid4vp://` authorization request and
+    // its QUERY STRING is delivered to the test's authorization
+    // endpoint (log-detail.js handleSubmitUri: GET submitUrl + '?' +
+    // query). The harness produces that request from OUR verifier
+    // surface (POST /v1/auth/verifier/request - the request creator
+    // DESIGN 9a.27) and GETs the submitUrl with the request's query
+    // (request_uri=...). One drive per submitUrl per module (the
+    // request's nonce is single-use; a second drive would mint a
+    // fresh request the module never asked for).
+    const uriInputs: Array<{ submitUrl?: string; description?: string }> =
+      runner?.browser?.uriInputRequests ?? [];
+    for (const uriReq of uriInputs) {
+      const submitUrl = uriReq?.submitUrl;
+      if (!submitUrl || uriSubmitted.has(submitUrl)) continue;
+      uriSubmitted.add(submitUrl);
+      try {
+        // The verifier-request creator (DESIGN 9a.27): POST with the
+        // seed's OAuth client binding - the suite's verifier modules
+        // only consume the request object; the OAuth binding rides
+        // the pending record for the redirect flow.
+        const env = await import('./env.js');
+        const seedOut = env.seedOutPath();
+        const { readFileSync, existsSync } = await import('node:fs');
+        let oauthClientId = '';
+        if (existsSync(seedOut)) {
+          const text = readFileSync(seedOut, 'utf8');
+          oauthClientId = text.match(/client_id\(basic\)=([\w-]+)/)?.[1] ?? '';
+        }
+        const reqResp = await fetch(
+          `${env.certAuthHost()}/v1/auth/verifier/request?client_id=${encodeURIComponent(oauthClientId)}&redirect_uri=${encodeURIComponent(env.suiteCallback())}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+        );
+        if (!reqResp.ok) {
+          throw new Error(`verifier request creator: HTTP ${reqResp.status} ${(await reqResp.text()).slice(0, 120)}`);
+        }
+        const req = (await reqResp.json()) as { qr_data?: string; request_uri?: string };
+        // The paste contract: the openid4vp:// URI's QUERY STRING
+        // (request_uri=...) rides the submitUrl GET (log-detail.js
+        // handleSubmitUri - the same path the suite's UI takes).
+        const qIdx = (req.qr_data ?? '').indexOf('?');
+        const query = qIdx >= 0 ? (req.qr_data as string).substring(qIdx) : `?request_uri=${encodeURIComponent(req.request_uri ?? '')}`;
+        const submitted = await fetch(`${submitUrl}${query}`, { method: 'GET' });
+        logStep(`  submitted verifier request to ${submitUrl.slice(0, 60)}: HTTP ${submitted.status}`);
+      } catch (e) {
+        logStep(`  uriInput submit failed: ${(e as Error).message.slice(0, 160)}`);
+      }
+    }
     // A RE-ARMED drive (the 45s WAITING re-arm) must not fire after the
     // suite has already turned terminal (the 'Illegal test state change:
     // FINISHED -> RUNNING' phantom) - the terminal check re-runs right
