@@ -522,7 +522,9 @@ dcr() { # dcr <name> <json-extra>
   parts+=("\"client_name\":\"$name\"")
   if [[ "$extra" != *'"redirect_uris"'* ]]; then parts+=("\"redirect_uris\":[\"$CALLBACK\"]"); fi
   if [[ "$extra" != *'"grant_types"'* ]]; then parts+=("\"grant_types\":[\"authorization_code\",\"refresh_token\"]"); fi
-  parts+=("\"response_types\":[\"code\"]")
+  # Same duplicate-field rule for response_types (the hybrid/formpost
+  # families register their own multi-type arrays).
+  if [[ "$extra" != *'"response_types"'* ]]; then parts+=("\"response_types\":[\"code\"]"); fi
   if [[ "$extra" != *'"scope"'* ]]; then parts+=("\"scope\":\"openid profile email phone address offline_access\""); fi
   parts+=("\"code_challenge_method\":\"S256\"")
   if [[ "$extra" != *'"consent_required"'* ]]; then parts+=("\"consent_required\":$CONSENT_REQUIRED"); fi
@@ -553,9 +555,22 @@ for c in items:
 " | while read -r cid; do
   [ -n "$cid" ] && ccall auth DELETE "/v1/admin/oauth-clients/$cid" --env "$ENV_ID" >/dev/null
 done
-BASIC_JSON="$(dcr "cert-basic-basic" "\"token_endpoint_auth_method\":\"client_secret_basic\",\"post_logout_redirect_uris\":[\"${CALLBACK%/callback}/post_logout_redirect\"]")"
-POSTC_JSON="$(dcr "cert-basic-post" "\"token_endpoint_auth_method\":\"client_secret_post\",\"post_logout_redirect_uris\":[\"${CALLBACK%/callback}/post_logout_redirect\"]")"
-PKCE_JSON="$(dcr "cert-public-pkce" '"token_endpoint_auth_method":"none"')"
+# The family's response_types: the standard families certify `code`;
+# the implicit/hybrid/formpost families' clients register the FULL
+# OIDC Core matrix (OIDC Core 3.1.2.1 - the authorize endpoint rejects
+# an unregistered response_type; the suite's implicit cells request
+# id_token / id_token token and the hybrid cells request
+# code id_token / code token / code id_token token against the SAME
+# static client, and the formpost plan family re-uses the same cells
+# under the form_post response mode).
+HYBRID_RESPONSE_TYPES='\"response_types\":[\"code\",\"code id_token\",\"code token\",\"code id_token token\",\"id_token\",\"id_token token\"]'
+case "$PROFILE" in
+  implicit|hybrid|formpost) : ;;
+  *) HYBRID_RESPONSE_TYPES="\"response_types\":[\"code\"]" ;;
+esac
+BASIC_JSON="$(dcr "cert-basic-basic" "\"token_endpoint_auth_method\":\"client_secret_basic\",$HYBRID_RESPONSE_TYPES,\"post_logout_redirect_uris\":[\"${CALLBACK%/callback}/post_logout_redirect\"]")"
+POSTC_JSON="$(dcr "cert-basic-post" "\"token_endpoint_auth_method\":\"client_secret_post\",$HYBRID_RESPONSE_TYPES,\"post_logout_redirect_uris\":[\"${CALLBACK%/callback}/post_logout_redirect\"]")"
+PKCE_JSON="$(dcr "cert-public-pkce" "\"token_endpoint_auth_method\":\"none\",$HYBRID_RESPONSE_TYPES")"
 
 # RFC 8628 device-flow client - the rotate-keys module's operator grant
 # (the platform key rotation - see runner.ts's device block). It rides a

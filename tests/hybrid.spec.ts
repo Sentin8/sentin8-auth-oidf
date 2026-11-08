@@ -65,6 +65,16 @@ function loadSeededClients(): void {
       redirect_uri: suiteCallback(),
       token_endpoint_auth_method: 'client_secret_post',
     } as SuiteClientConfig;
+    // The client_secret_post VARIANT module reads this dedicated key
+    // (the client2 twin - the basic spec's own contract; the suite
+    // wants the key present even though the registration is shared).
+    config.client_secret_post = {
+      client_id: postId,
+      client_secret: postSecret,
+      scope: 'openid profile email phone address',
+      redirect_uri: suiteCallback(),
+      token_endpoint_auth_method: 'client_secret_post',
+    } as SuiteClientConfig;
   }
 }
 
