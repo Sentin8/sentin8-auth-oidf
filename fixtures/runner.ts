@@ -113,7 +113,13 @@ async function runBrowserCommands(
         break;
       case 'waitFlutter': {
         // Wait for the Flutter scene host to attach its semantics tree.
-        const deadline = Date.now() + 20_000;
+        // A TERMINAL, non-Flutter page (the OP's authorize error page -
+        // the RFC 6749 4.1.2.1 human-visible reject surfaces) never
+        // hosts one: probe briefly (5s), then fall through - the drive
+        // must not block the module's placeholder resolution (the
+        // error-page screenshot class) waiting for a SPA that will
+        // never attach.
+        const deadline = Date.now() + 5_000;
         while (Date.now() < deadline) {
           const ok = await page
             .evaluate(() => !!document.querySelector('flt-semantics, flutter-view, flt-glass-pane'))
@@ -129,8 +135,20 @@ async function runBrowserCommands(
         // path as clicking - never the API directly. A false return
         // (e.g. the sign-in rate limiter's 429 window) backs off and
         // retries - a rate-limited login succeeds in the next window.
+        // A page WITHOUT the bridge host (the OP's inline error pages)
+        // is a terminal surface for the task: the full 90s retry window
+        // would burn the module's clock while the placeholder (the
+        // error-page screenshot) waits - probe for the SPA host first
+        // and complete early when it never attaches.
         const fn = String(cmd[1]);
         const args = cmd.slice(2).map(String);
+        const flutterHost = await page
+          .evaluate(() => !!document.querySelector('flt-semantics, flutter-view, flt-glass-pane'))
+          .catch(() => false);
+        if (!flutterHost) {
+          logStep(`  bridge ${fn}: skipped - the page hosts no Flutter SPA (a terminal error page)`);
+          break;
+        }
         const deadline = Date.now() + 90_000;
         let ok = false;
         let attempt = 0;
