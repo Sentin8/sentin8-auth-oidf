@@ -18,26 +18,28 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-# family -> env-slug:alias:profile
+# family -> env-slug:alias:profile (the battery order: simple to hard
+# security - the OIDC Core families first, the credential families
+# last; mirrors conformance-run-all.sh's ORDER).
 declare -A FAMILY=(
   [smoke]="cert:sentin8-local:standard"
   [oidc-basic]="cert:sentin8-local:standard"
   [oidc-config]="cert:sentin8-local:standard"
   [oidc-dynamic]="cert:sentin8-local:standard"
   [logout]="cert:sentin8-local:standard"
+  [implicit]="cert-imp:sentin8-imp:standard"
+  [hybrid]="cert-hyb:sentin8-hyb:standard"
+  [formpost]="cert-fp:sentin8-fp:formpost"
+  [sessionmgmt]="cert-sm:sentin8-sm:sm_session"
   [ciba]="cert-ciba:sentin8-ciba:fapi_ciba"
   [fapi1]="cert-fapi1:sentin8-fapi1:fapi_1_advanced"
   [fapi2]="cert-fapi2:sentin8-fapi2:fapi_2"
   [fapi2-signing]="cert-f2m:sentin8-f2m:fapi_2_message_signing"
   [vci-issuer]="cert-vci:sentin8-vci:vci"
   [vci-haip]="cert-haip:sentin8-haip:vci_haip"
-  [implicit]="cert-imp:sentin8-imp:standard"
-  [hybrid]="cert-hyb:sentin8-hyb:standard"
-  [formpost]="cert-fp:sentin8-fp:formpost"
-  [sessionmgmt]="cert-sm:sentin8-sm:sm_session"
   [oid4vp]="cert-vp:sentin8-vp:vp"
 )
-ORDER=(smoke oidc-basic oidc-config oidc-dynamic logout ciba fapi1 fapi2 fapi2-signing vci-issuer vci-haip implicit hybrid formpost sessionmgmt oid4vp)
+ORDER=(smoke oidc-basic oidc-config oidc-dynamic logout implicit hybrid formpost sessionmgmt ciba fapi1 fapi2 fapi2-signing vci-issuer vci-haip oid4vp)
 
 requested=("$@")
 if [ ${#requested[@]} -eq 0 ] || [ -z "${requested[0]:-}" ]; then

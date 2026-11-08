@@ -55,9 +55,32 @@ async function verifierConfigParts(): Promise<{ client: Record<string, unknown>;
   const credential: Record<string, unknown> = {};
   if (existsSync(seedOut)) {
     const text = readFileSync(seedOut, 'utf8');
-    const caPem = text.match(/haip_issuer_ca_pem\(haip\)=([\s\S]*?-----END CERTIFICATE-----)/)?.[1];
-    if (caPem) {
-      client.request_object_trust_anchor_pem = caPem;
+    // The RICAL (ISO/IEC 18013-5 Annex F.3.2): the seed-minted Reader
+    // Issuer CA List - a std-base64 COSE_Sign1 whose certificateInfos
+    // list the issuance CA as a reader CA (isTrustAnchor=true). The
+    // suite reads client.rical (RegisterRical base64-decodes it); with
+    // it the request object's x5c chain validates against the RICAL
+    // (ValidateRequestObjectX5cChainAgainstRical) and the matched
+    // entry's trust constraints are checked
+    // (EnsureMatchedRicalEntryHasNoTrustConstraints).
+    //
+    // The RICAL REPLACES the single Request Object Trust Anchor: the
+    // suite rejects a config carrying BOTH ("the RICAL is a list of
+    // reader CAs that replaces the single trust anchor") - when the
+    // RICAL is present the anchor PEM stays OUT.
+    // The RICAL rides the seed-out as ONE std-base64 line (the COSE_Sign1
+    // bytes) - the value regex is single-line (the next seed-out lines
+    // are NOT continuations; a loose [A-Za-z0-9+/=]+ match would
+    // swallow them and the base64 decode would fail).
+    const ricalB64 = text.match(/^rical_b64\(rical\)=([A-Za-z0-9+/=]+)$/m)?.[1];
+    if (ricalB64) {
+      client.rical = ricalB64;
+    } else {
+      // No RICAL - the single-anchor form (the issuance CA).
+      const caPem = text.match(/haip_issuer_ca_pem\(haip\)=([\s\S]*?-----END CERTIFICATE-----)/)?.[1];
+      if (caPem) {
+        client.request_object_trust_anchor_pem = caPem;
+      }
     }
   }
   // The wallet's fresh keypair: the private half goes to the suite
@@ -202,13 +225,13 @@ test.beforeAll(async ({ browser }) => {
   suiteApi = new SuiteApi();
   logStep('creating plans: oid4vp (verifier-haip + plain discovery)');
   const extra = await verifierConfigParts();
-  // The suite reads the trust anchor + the credential mint key NESTED
-  // under the client/credential config sections - merge them into the
-  // base config (not a top-level spread, which would leave them at
-  // the root where no condition reads them).
+  // The suite reads the trust anchor + the RICAL + the credential mint
+  // key NESTED under the client/credential config sections - merge them
+  // into the base config (not a top-level spread, which would leave them
+  // at the root where no condition reads them).
   const planConfig: SuiteTestConfig = {
     ...config,
-    client: { ...config.client, ...extra.client },
+    client: { ...config.client, ...extra.client } as SuiteTestConfig['client'],
     credential: { ...extra.credential },
   };
   // The HAIP plan PINS its own axes on the module entries
