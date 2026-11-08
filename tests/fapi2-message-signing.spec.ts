@@ -19,7 +19,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 let suiteApi: SuiteApi;
-let planId: string;
+let planIds: string[] = [];
 
 // dynamic_client: the suite DCRs its own clients - no pre-registered ids.
 const config = {
@@ -171,24 +171,19 @@ const CELL: Record<string, string> = { dpop: 'dpop', mtls: 'mtls' };
 type FapiVariant = { client_auth_type: string; sender_constrain: string; openid: string; fapi_profile: string };
 const cellFor = (v: FapiVariant): string => CELL[v.sender_constrain] ?? v.sender_constrain;
 
-test.beforeAll(async ({ browser }) => {
+// The beforeAll creates NO plans: the plan-creation per cell happens in
+// the run body itself (each cell's plan carries its OWN static client
+// config - a beforeAll plan would be clientless, never run, and sits
+// in the suite UI as a ghost "all modules not run" entry that reads as
+// a skipped variant cell). The suite API is still warmed here.
+test.beforeAll(async () => {
   await SuiteApi.waitAuthReady();
   suiteApi = new SuiteApi();
-  logStep('creating FAPI2 Message Signing plans (dynamic_client variant)');
-  for (const v of VARIANTS) {
-    const plan = await suiteApi.createPlan(
-      'fapi2-message-signing-final-test-plan',
-      config,
-      v,
-    );
-    planId = plan.id;
-    logStep(`plan ${planId} [${v.client_auth_type}/${v.sender_constrain}]: ${plan.modules.length} module-variants`);
-  }
 });
 
 test.afterAll(async () => {
   writeFileSync(join(resultsDir(), 'fapi2-message-signing-steps.log'), stepLog());
-  if (planId) writeFileSync(join(resultsDir(), 'fapi2-message-signing-plan.txt'), planId);
+  if (planIds.length > 0) writeFileSync(join(resultsDir(), 'fapi2-message-signing-plan.txt'), planIds.join('\n'));
 });
 
 test('FAPI2 Message Signing - run every module-variant to terminal', async ({ browser }) => {
@@ -214,6 +209,7 @@ test('FAPI2 Message Signing - run every module-variant to terminal', async ({ br
       v,
     );
     const cellPlan = plan.id;
+    planIds.push(cellPlan);
     logStep(`VARIANT ${v.client_auth_type}/${v.sender_constrain} -> plan ${cellPlan} (${plan.modules.length} modules)`);
     const page = await browser.newPage({ ignoreHTTPSErrors: true });
     for (const m of (await suiteApi.getPlan(cellPlan)).modules) {
