@@ -376,9 +376,13 @@ async function runModuleOnPage(
       uriSubmitted.add(submitUrl);
       try {
         // The verifier-request creator (DESIGN 9a.27): POST with the
-        // seed's OAuth client binding - the suite's verifier modules
-        // only consume the request object; the OAuth binding rides
-        // the pending record for the redirect flow.
+        // seed's OAuth client binding, NO redirect_uri - the §8.2
+        // answer's redirect target is then the OP-HOSTED landing
+        // (/wallet-verifier/done?verification=...), the page the
+        // ExpectVerifierSuccessfulVerificationPage drive visits and
+        // screenshots (a suite-callback redirect_uri would both
+        // collide with the module's own callback and hide the
+        // success page from the drive).
         const env = await import('./env.js');
         const seedOut = env.seedOutPath();
         const { readFileSync, existsSync } = await import('node:fs');
@@ -388,7 +392,7 @@ async function runModuleOnPage(
           oauthClientId = text.match(/client_id\(basic\)=([\w-]+)/)?.[1] ?? '';
         }
         const reqResp = await fetch(
-          `${env.certAuthHost()}/v1/auth/verifier/request?client_id=${encodeURIComponent(oauthClientId)}&redirect_uri=${encodeURIComponent(env.suiteCallback())}`,
+          `${env.certAuthHost()}/v1/auth/verifier/request?client_id=${encodeURIComponent(oauthClientId)}`,
           { method: 'POST', headers: { 'Content-Type': 'application/json' } },
         );
         if (!reqResp.ok) {
@@ -621,6 +625,54 @@ async function runModuleOnPage(
               } catch (err) {
                 logStep(`  assisted page goto failed: ${(err as Error).message.slice(0, 80)}`);
               }
+            }
+          }
+          // OIDF-VPPAGE-1 (OID4VP - the verifier success page): the suite's
+          // ExpectVerifierSuccessfulVerificationPage wants a screenshot of a
+          // page DISPLAYING the verified credential's contents. The
+          // wallet-side drive is pure API (the parked page sits on
+          // about:blank) - a live screenshot of it answers nothing. The
+          // suite's log carries the verifier's redirect_uri (the §8.2
+          // answer: /wallet-verifier/done?verification=... - the OP-hosted
+          // success landing, auth DESIGN 9a.27) as a must-visit entry;
+          // DRIVE it and screenshot the landed success page. When a
+          // client redirect_uri drove the request, the entry is the
+          // client's callback (a code redirect, not a success page) -
+          // still the honest screenshot of the completed flow.
+          const confirmMsg2 = String(e?.msg ?? '');
+          const wantsVerifierSuccess = /successfully verified the presented credential/i.test(confirmMsg2);
+          if (wantsVerifierSuccess) {
+            // The success page to drive is the OP-HOSTED landing
+            // (/wallet-verifier/done?verification=...). The suite's
+            // must-visit redirect_uri entry is the client-callback form
+            // (the oauth chain's redirect target) - VISITING it MID-MODULE
+            // makes the suite's own callback receive an unexpected HTTP
+            // call ("Got unexpected HTTP call to callback" - the module
+            // INTERRUPTs FAILED). When the entry IS the suite callback,
+            // the redirect_uri ANSWER is still the OP-hosted landing (the
+            // drive created the verifier request with NO redirect_uri);
+            // drive that instead (the §8.2 response body from the wallet's
+            // POST - read from the runner log's direct-post response
+            // entry, or fall back to leaving the page where it is).
+            const log3 = await suiteApi.getLog(runnerId);
+            let successUrl: string | null = null;
+            for (const e2 of log3) {
+              const red = (e2 as { redirect_uri?: string })?.redirect_uri;
+              if (typeof red === 'string' && /wallet-verifier\/done\?verification=/.test(red)) {
+                successUrl = red;
+                break;
+              }
+            }
+            if (successUrl) {
+              try {
+                await page.goto(successUrl, { waitUntil: 'load', timeout: 20_000 });
+                await page.waitForTimeout(1_500);
+                logStep(`  drove the verifier success page for the confirmation (${successUrl.slice(0, 90)})`);
+              } catch (err) {
+                logStep(`  verifier success page goto failed: ${(err as Error).message.slice(0, 80)}`);
+              }
+            } else {
+              logStep('  verifier success page not found in the runner log (no OP-hosted landing entry)');
             }
           }
           try {
