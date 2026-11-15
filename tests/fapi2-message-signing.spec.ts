@@ -70,7 +70,29 @@ function seededFapiClients(cell: string): { client: FapiClient; client2: FapiCli
       ? (key as { keys: unknown[] })
       : { keys: [key] },
   });
-  return { client: mk(cid, jwksObj), client2: mk(cid2, jwksObj2) };
+  // The mtls-SENDER pk cell (private_key_jwt auth + sender_constrain=mtls):
+  // the suite's holder-of-key family still needs the client CERT pair in
+  // the config (the module strips it for the negative). The seed's mtls
+  // material rides the SAME cert pair as the mtls cell - attach it.
+  const mtlsExtras = cell === 'mtls-pk'
+    ? (() => {
+        const certB64 = text.match(/mtls_cert_der_b64\(main\)=([A-Za-z0-9+/=]+)/)?.[1];
+        const keyPem = text.match(/mtls_key_pem\(main\)=([\s\S]*?)-----END PRIVATE KEY-----/)?.[1];
+        const caPem = readFileSync(process.env.SENTIN8_TLS_CA_PEM!
+          ?? join(resultsDir(), '..', '..', '..', '.run', 'secrets', 'acme-ca', 'root-ca.crt'), 'utf8');
+        if (!certB64 || !keyPem) return null;
+        const keyB64 = keyPem
+          .replace(/-----(BEGIN|END) [A-Z ]+-----/g, '')
+          .replace(/\s+/g, '');
+        return { mtls: { cert: certB64, key: keyB64, ca: caPem } };
+      })()
+    : null;
+  if (cell === 'mtls-pk' && !mtlsExtras) return null;
+  return {
+    client: mk(cid, jwksObj),
+    client2: mk(cid2, jwksObj2),
+    ...(mtlsExtras ?? {}),
+  } as { client: FapiClient; client2: FapiClient };
 }
 
 /**
