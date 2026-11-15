@@ -172,6 +172,12 @@ const FLOW_CELLS = [
 // vci.credential_offer_uri (the landing accepts both forms - auth
 // wallet.rs: the by-value JSON is inline; the by-reference URI resolves
 // server-side to the same JSON).
+// The offer-cell config additions: the by_value cell's offer lands as
+// the JSON in vci.credential_offer_redirect_url's credential_offer
+// query param; the by_reference cell resolves the SAME offer through
+// vci.credential_offer_uri (the landing accepts both forms - auth
+// wallet.rs: the by-value JSON is inline; the by-reference URI resolves
+// server-side to the same JSON).
 function offerCellConfig(cell: { flow: string; offer?: string }): Record<string, unknown> {
   const base = certAuthHost();
   const vciCfg: Record<string, unknown> = {};
@@ -185,7 +191,12 @@ function offerCellConfig(cell: { flow: string; offer?: string }): Record<string,
       `${base}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
     }
   }
-  return { vci: vciCfg };
+  // MERGE, never replace: the spread at the call site overlays the
+  // cell's offer members ON TOP of the base config's vci section (an
+  // object spread replaces the WHOLE nested object - a bare
+  // `{ ...config, vci: {} }` clobbered credential_issuer_url and the
+  // metadata module died 'Couldn't find vci.credential_issuer_url').
+  return { vci: { ...(config.vci as Record<string, unknown> ?? {}), ...vciCfg } };
 }
 
 test.beforeAll(async () => {
