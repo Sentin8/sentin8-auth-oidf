@@ -191,6 +191,13 @@ test('FAPI CIBA ID1 - run every module to terminal', async ({ browser }) => {
         const run = await runModule(suiteApi, browser, plan.id, m.testModule,
           { ...baseConfig, ...cellClients, ...tls, browser: browserAutomationFor(m.testModule) } as SuiteTestConfig,
           /expired|auth-req-id/i.test(m.testModule) ? 960_000 : undefined);
+        // Export the module log BEFORE the assertions - a FAILED module
+        // still exports its log (the diagnosis surface).
+        {
+          const out = join(resultsDir(), 'logs');
+          mkdirSync(out, { recursive: true });
+          writeFileSync(join(out, `ciba-${v.client_auth_type}-${v.ciba_mode}-${m.testModule}.json`), JSON.stringify(run.log));
+        }
         expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
         const result = String(run.result);
         const skipMsg = (run.log ?? [])
@@ -208,9 +215,6 @@ test('FAPI CIBA ID1 - run every module to terminal', async ({ browser }) => {
         if (run.warnings.length > 0) {
           failures.push(`[${v.client_auth_type}/${v.ciba_mode}] ${m.testModule}: ${run.warnings.join(' | ')}`);
         }
-        const out = join(resultsDir(), 'logs');
-        mkdirSync(out, { recursive: true });
-        writeFileSync(join(out, `ciba-${v.client_auth_type}-${v.ciba_mode}-${m.testModule}.json`), JSON.stringify(run.log));
       }
       writeFileSync(join(resultsDir(), 'ciba-poll-plan.txt'), planIds.join('\n'));
     }
