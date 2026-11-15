@@ -145,6 +145,15 @@ export function suiteCibaNotification(alias: string = CONFORMANCE_ALIAS): string
   return `${SUITE_BASE}/test/a/${alias}/ciba-notification-endpoint`;
 }
 
+/** The suite's Front-Channel Logout iframe landing (auth DESIGN §9a.28):
+ * the OP's logout-done page embeds the client's registered
+ * frontchannel_logout_uri - the suite's static-client rule: the redirect
+ * URL with the portion after the alias replaced by /frontchannel_logout.
+ * NO query string (FCL 2 - the OP appends iss/sid itself). */
+export function suiteFrontchannelLogout(alias: string = CONFORMANCE_ALIAS): string {
+  return `${SUITE_BASE}/test/a/${alias}/frontchannel_logout`;
+}
+
 /**
  * The certification test user (per-env - provisioned by the seed into
  * the active env; DESIGN §9a.2 item 2 - one user per env).

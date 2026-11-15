@@ -108,6 +108,10 @@ sessionmgmt: FAMILY_ENV := cert-sm
 sessionmgmt: ## Session + 3rdparty + Back-Channel OP trio
 	@$(call with_family_env,pnpm run test:sessionmgmt)
 
+fcl: FAMILY_ENV := cert-fcl
+fcl: ## Front-Channel Logout OP (the 9a.28 family)
+	@$(call with_family_env,pnpm run test:fcl)
+
 oid4vp: FAMILY_ENV := cert-vp
 oid4vp: ## OID4VP verifier (HAIP + plain plans)
 	@$(call with_family_env,pnpm run test:oid4vp)

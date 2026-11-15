@@ -24,6 +24,7 @@
     "test:hybrid": "playwright test tests/hybrid.spec.ts",
     "test:formpost": "playwright test tests/formpost.spec.ts",
     "test:sessionmgmt": "playwright test tests/sessionmgmt.spec.ts",
+    "test:fcl": "playwright test tests/fcl.spec.ts",
     "test:oid4vp": "playwright test tests/oid4vp.spec.ts",
     "lint": "tsc --noEmit",
     "install-browsers": "playwright install chromium"

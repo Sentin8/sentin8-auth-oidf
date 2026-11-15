@@ -27,6 +27,7 @@ declare -A FAMILY=(
   [oidc-config]="cert:sentin8-local:standard"
   [oidc-dynamic]="cert:sentin8-local:standard"
   [logout]="cert:sentin8-local:standard"
+  [fcl]="cert-fcl:sentin8-fcl:fcl"
   [implicit]="cert-imp:sentin8-imp:standard"
   [hybrid]="cert-hyb:sentin8-hyb:standard"
   [formpost]="cert-fp:sentin8-fp:formpost"
@@ -39,7 +40,7 @@ declare -A FAMILY=(
   [vci-haip]="cert-haip:sentin8-haip:vci_haip"
   [oid4vp]="cert-vp:sentin8-vp:vp"
 )
-ORDER=(smoke oidc-basic oidc-config oidc-dynamic logout implicit hybrid formpost sessionmgmt ciba fapi1 fapi2 fapi2-signing vci-issuer vci-haip oid4vp)
+ORDER=(smoke oidc-basic oidc-config oidc-dynamic logout fcl implicit hybrid formpost sessionmgmt ciba fapi1 fapi2 fapi2-signing vci-issuer vci-haip oid4vp)
 
 requested=("$@")
 if [ ${#requested[@]} -eq 0 ] || [ -z "${requested[0]:-}" ]; then

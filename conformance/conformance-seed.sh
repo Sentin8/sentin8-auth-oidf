@@ -245,6 +245,13 @@ case "$PROFILE" in
     # flags - the check_session_iframe + the backchannel fanout ride the
     # handler paths.
     FLAGS='"require_par":false,"require_jarm":false,"require_dpop":false,"require_iss":false,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
+  fcl)
+    # The Front-Channel Logout OP family (auth DESIGN 9a.28): the plain
+    # OIDC posture - the FCL surface rides the client registration
+    # (frontchannel_logout_uri) + the logout-done iframes, not a flag
+    # set. The plan's discovery verification reads
+    # frontchannel_logout_supported/_session_supported (always true).
+    FLAGS='"require_par":false,"require_jarm":false,"require_dpop":false,"require_iss":false,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
   vp)
     # The OID4VP verifier family (auth DESIGN 9a.27): the verifier
     # requests ride the eudi_wallet connection + the issuance-chain x5c
@@ -971,6 +978,18 @@ PYMTLS
   done
 fi
 emit_client basic "$BASIC_JSON"
+
+# ── Front-Channel Logout OP client (auth DESIGN 9a.28) ──
+# The FCL plan's static-client rule (the suite module's own description):
+# frontchannel_logout_uri = the redirect URL with the portion after the
+# alias replaced by /frontchannel_logout, and /post_logout_redirect
+# registered as a post_logout_redirect_uri. No query string (FCL 2).
+if [[ "$PROFILE" == "fcl" ]]; then
+  log "registering the FCL client (frontchannel_logout_uri + session required)"
+  FCL_LOGOUT_URI="${CALLBACK%/callback}/frontchannel_logout"
+  FCL_JSON="$(dcr "cert-fcl" "\"token_endpoint_auth_method\":\"client_secret_basic\",\"redirect_uris\":[\"$CALLBACK\"],\"frontchannel_logout_uri\":\"$FCL_LOGOUT_URI\",\"frontchannel_logout_session_required\":true,\"post_logout_redirect_uris\":[\"${CALLBACK%/callback}/post_logout_redirect\"]")"
+  emit_client fcl "$FCL_JSON"
+fi
 emit_client post "$POSTC_JSON"
 emit_client pkce "$PKCE_JSON"
 emit_client ciba "$CIBA_JSON"
