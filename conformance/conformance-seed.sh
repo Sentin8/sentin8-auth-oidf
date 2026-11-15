@@ -915,8 +915,8 @@ if [[ "$PROFILE" == "fapi_ciba" ]]; then
     CIBAMTLS_JSON="$(python3 - <<"PYMTLS"
 import base64, hashlib, json
 from cryptography import x509
-from cryptography.hazmat.primitives import asymmetric, ec, rsa
 from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 import datetime, os
 
