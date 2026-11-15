@@ -1,16 +1,21 @@
 // SPDX-FileCopyrightText: Copyright Logically Magic Inc. <hello@logicallymagic.com>
 // SPDX-License-Identifier: Apache-2.0
 
-// tests/fapi1-advanced.spec.ts - FAPI 1.0 Advanced final plan.
+// tests/fapi1-advanced.spec.ts - FAPI 1.0 Advanced final plan (OIDF-ALL-1:
+// the FULL 8-cell catalog matrix).
 //
 // The plan variant axes (the suite's FAPI1AdvancedFinalTestPlan):
 //   fapi_profile=plain_fapi, client_auth_type=private_key_jwt|mtls,
-//   fapi_auth_request_method=pushed (PAR), fapi_response_mode=jarm.
-// The cert env's security profile flips to fapi_1_advanced before the
-// run (require_par + require_jarm + require_mtls + require_iss - the
-// seed's `CONFORMANCE_PROFILE=fapi_1_advanced`) and the seed registers
-// the jwks clients + publishes their PRIVATE jwks to seed-out (the
-// same fapi2-<cell> naming the suite's assertion signing consumes).
+//   fapi_auth_request_method=by_value|pushed, fapi_response_mode=
+//   plain_response|jarm.
+// The catalog cells (8): client_auth_type (2) x fapi_auth_request_method
+// (2) x fapi_response_mode (2). Each cell runs as its OWN plan over the
+// per-cell seeded client (the private_key_jwt cells read the jwks
+// clients cert-fapi2-<cell>; the mtls cells read the self-signed cert
+// clients). The cert env's security profile is fapi_1_advanced
+// (require_par + require_jarm + require_mtls + require_iss - the seed's
+// `CONFORMANCE_PROFILE=fapi_1_advanced`); the per-cell response-mode /
+// request-method variants select the plan's module slices.
 
 import { test, expect } from '@playwright/test';
 import { SuiteApi, standardBrowserAutomation, browserAutomationFor, type SuiteTestConfig, type SuiteClientConfig } from '../fixtures/suite.js';
@@ -22,7 +27,6 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 let suiteApi: SuiteApi;
-let planId: string;
 
 const config = {
   alias: CONFORMANCE_ALIAS,
@@ -36,14 +40,43 @@ const harnessBrowserBlock = standardBrowserAutomation();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FapiClient = any;
-function seededFapi1Clients(): { client: FapiClient; client2: FapiClient } | null {
+// The per-cell seeded client reader: the private_key_jwt cells read the
+// jwks clients (client_id(fapi2-<cell>) + private_jwks(fapi2-<cell>));
+// the mtls cells read the self-signed cert clients (the SAME shape the
+// fapi2 mtls cells use - client_id(fapi2-mtls) + the cert/key sections).
+function seededFapi1Clients(cell: { client_auth_type: string }): { client: FapiClient; client2: FapiClient } | null {
   const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
-  const cid = text.match(/client_id\(fapi2-dpop\)=([a-f0-9]+)/)?.[1];
-  const cid2 = text.match(/client_id\(fapi2-second-dpop\)=([a-f0-9]+)/)?.[1];
-  const jwksLine = text.match(/private_jwks\(fapi2-dpop\)=(\{.*\})/)?.[1];
-  const jwksLine2 = text.match(/private_jwks\(fapi2-second-dpop\)=(\{.*\})/)?.[1];
+  if (cell.client_auth_type === 'mtls') {
+    const cid = text.match(/client_id\(fapi2-mtls\)=([a-f0-9]+)/)?.[1];
+    const cid2 = text.match(/client_id\(fapi2-second-mtls\)=([a-f0-9]+)/)?.[1];
+    const certB64 = text.match(/mtls_cert_der_b64\(main\)=([A-Za-z0-9+\/=]+)/)?.[1];
+    const certB642 = text.match(/mtls_cert_der_b64\(second\)=([A-Za-z0-9+\/=]+)/)?.[1];
+    const keyPem = text.match(/mtls_key_pem\(main\)=([\s\S]*?)-----END PRIVATE KEY-----/)?.[1];
+    const keyPem2 = text.match(/mtls_key_pem\(second\)=([\s\S]*?)-----END PRIVATE KEY-----/)?.[1];
+    if (!cid || !cid2 || !certB64 || !certB642 || !keyPem || !keyPem2) return null;
+    const keyB64 = keyPem.replace(/-----(BEGIN|END) [A-Z ]+-----/g, '').replace(/\s+/g, '');
+    const keyB642 = keyPem2.replace(/-----(BEGIN|END) [A-Z ]+-----/g, '').replace(/\s+/g, '');
+    const mk = (id: string, cert: string, key: string): FapiClient => ({
+      client_id: id,
+      client_auth_type: 'mtls',
+      token_endpoint_auth_method: 'self_signed_tls_client_auth',
+      scope: 'openid profile email phone address offline_access',
+      redirect_uri: suiteCallback(),
+    });
+    return {
+      client: mk(cid, certB64, keyB64),
+      client2: mk(cid2, certB642, keyB642),
+    };
+  }
+  // The private_key_jwt cells: cell name dpop for the dpop-sender cell,
+  // mtls-pk for the mtls-sender private-key cell (the seed's naming).
+  const cellName = 'dpop';
+  const cid = text.match(new RegExp(`client_id\\(fapi2-${cellName}\\)=([a-f0-9]+)`))?.[1];
+  const cid2 = text.match(new RegExp(`client_id\\(fapi2-second-${cellName}\\)=([a-f0-9]+)`))?.[1];
+  const jwksLine = text.match(new RegExp(`private_jwks\\(fapi2-${cellName}\\)=(\\{.*\\})`))?.[1];
+  const jwksLine2 = text.match(new RegExp(`private_jwks\\(fapi2-second-${cellName}\\)=(\\{.*\\})`))?.[1];
   if (!cid || !cid2 || !jwksLine || !jwksLine2) return null;
   let jwksObj: unknown = null;
   let jwksObj2: unknown = null;
@@ -88,14 +121,24 @@ function seededFapiTlsSections(): { mtls?: { cert: string; key: string; ca?: str
   };
 }
 
-// The FAPI1 plan's FOUR variant axes: the platform posture (PAR+JARM,
-// private_key_jwt) = plain_fapi / private_key_jwt / pushed / jarm.
-const FAPI1_VARIANT = {
-  fapi_profile: 'plain_fapi',
-  client_auth_type: 'private_key_jwt',
-  fapi_auth_request_method: 'pushed',
-  fapi_response_mode: 'jarm',
-};
+// The FAPI1 plan's FOUR variant axes - the FULL 8-cell catalog matrix
+// (OIDF-ALL-1): client_auth_type (private_key_jwt|mtls) x
+// fapi_auth_request_method (by_value|pushed) x fapi_response_mode
+// (plain_response|jarm). One plan per cell; each cell runs the module
+// slices its axes select (the PAR family under pushed, the plain family
+// under by_value, the JARM family under jarm).
+const FAPI1_CELLS = [
+  { client_auth_type: 'private_key_jwt', fapi_auth_request_method: 'pushed', fapi_response_mode: 'jarm' },
+  { client_auth_type: 'private_key_jwt', fapi_auth_request_method: 'pushed', fapi_response_mode: 'plain_response' },
+  { client_auth_type: 'private_key_jwt', fapi_auth_request_method: 'by_value', fapi_response_mode: 'jarm' },
+  { client_auth_type: 'private_key_jwt', fapi_auth_request_method: 'by_value', fapi_response_mode: 'plain_response' },
+  { client_auth_type: 'mtls', fapi_auth_request_method: 'pushed', fapi_response_mode: 'jarm' },
+  { client_auth_type: 'mtls', fapi_auth_request_method: 'pushed', fapi_response_mode: 'plain_response' },
+  { client_auth_type: 'mtls', fapi_auth_request_method: 'by_value', fapi_response_mode: 'jarm' },
+  { client_auth_type: 'mtls', fapi_auth_request_method: 'by_value', fapi_response_mode: 'plain_response' },
+].map((c) => ({ ...c, fapi_profile: 'plain_fapi' }));
+
+const planIds: string[] = [];
 
 test.beforeAll(async ({ browser }) => {
   await SuiteApi.waitAuthReady();
@@ -107,20 +150,22 @@ test('FAPI1 Advanced - run every module to terminal', async ({ browser }) => {
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);
   const failures: string[] = [];
-  const cellClients = seededFapi1Clients();
-  if (!cellClients) {
-    failures.push('seeded FAPI1 client missing - re-run the seed with CONFORMANCE_PROFILE=fapi_1_advanced');
-  } else {
+  for (const cell of FAPI1_CELLS) {
+    const cellClients = seededFapi1Clients(cell);
+    if (!cellClients) {
+      failures.push(`seeded FAPI1 client missing for cell ${cell.client_auth_type}/${cell.fapi_auth_request_method}/${cell.fapi_response_mode} - re-run the seed with CONFORMANCE_PROFILE=fapi_1_advanced`);
+      continue;
+    }
     const tls = seededFapiTlsSections();
     const plan = await suiteApi.createPlan(
       'fapi1-advanced-final-test-plan',
       { ...config, ...cellClients, ...tls } as SuiteTestConfig,
-      FAPI1_VARIANT,
+      cell,
     );
-    planId = plan.id;
-    logStep(`plan ${planId}: ${plan.modules.length} module-variants`);
+    planIds.push(plan.id);
+    logStep(`VARIANT ${cell.client_auth_type}/${cell.fapi_auth_request_method}/${cell.fapi_response_mode} -> plan ${plan.id} (${plan.modules.length} module-variants)`);
     const page = await browser.newPage({ ignoreHTTPSErrors: true });
-    for (const m of (await suiteApi.getPlan(planId)).modules) {
+    for (const m of (await suiteApi.getPlan(plan.id)).modules) {
       if (onlyList.length > 0 && !onlyList.includes(m.testModule)) {
         logStep(`SKIP-ONLY ${m.testModule}`);
         continue;
@@ -131,7 +176,7 @@ test('FAPI1 Advanced - run every module to terminal', async ({ browser }) => {
       }
       const driveMs = /expired-request_uri/i.test(m.testModule) ? 960_000 : undefined;
       const tls = seededFapiTlsSections();
-      const run = await runModule(suiteApi, browser, planId, m.testModule,
+      const run = await runModule(suiteApi, browser, plan.id, m.testModule,
         { ...config, ...cellClients, ...tls, browser: browserAutomationFor(m.testModule) } as SuiteTestConfig,
         driveMs);
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
@@ -153,26 +198,28 @@ test('FAPI1 Advanced - run every module to terminal', async ({ browser }) => {
         expect(result, `${m.testModule} must not fail/skip`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
       }
       if (run.warnings.length > 0) {
-        failures.push(`${m.testModule}: ${run.warnings.join(' | ')}`);
+        failures.push(`[${cell.client_auth_type}/${cell.fapi_auth_request_method}/${cell.fapi_response_mode}] ${m.testModule}: ${run.warnings.join(' | ')}`);
       }
       const out = join(resultsDir(), 'logs');
       mkdirSync(out, { recursive: true });
-      writeFileSync(join(out, `fapi1-${m.testModule}.json`), JSON.stringify(run.log));
+      writeFileSync(join(out, `fapi1-${cell.client_auth_type}-${cell.fapi_auth_request_method}-${cell.fapi_response_mode}-${m.testModule}.json`), JSON.stringify(run.log));
     }
     await page.close();
-    writeFileSync(join(resultsDir(), 'fapi1-advanced-plan.txt'), planId);
   }
+  writeFileSync(join(resultsDir(), 'fapi1-advanced-plans.txt'), planIds.join('\n'));
   expect(failures, `warning-zero violations:\n${failures.join('\n')}`).toEqual([]);
 });
 
 test('plan-level results are all acceptable', async () => {
   test.skip(!!(process.env.OIDF_MODULES ?? '').trim(), 'singles run - plan gate skipped');
   const failures: string[] = [];
-  const results = await planResults(suiteApi, planId);
-  // SUITE-SANCTIONED SKIPPED at plan level: the ES256 client's RS256
-  // negatives (the suite itself skips them: "this will not prevent you
-  // certifying") - the ACCEPTABLE gate treats them as by-design passes.
-  const bad = [...results.entries()].filter(([, r]) => r && !ACCEPTABLE.has(r) && !(r === 'SKIPPED'));
-  for (const [m, r] of bad) failures.push(`${m}: ${r}`);
+  for (const pid of planIds) {
+    const results = await planResults(suiteApi, pid);
+    // SUITE-SANCTIONED SKIPPED at plan level: the ES256 client's RS256
+    // negatives (the suite itself skips them: "this will not prevent you
+    // certifying") - the ACCEPTABLE gate treats them as by-design passes.
+    const bad = [...results.entries()].filter(([, r]) => r && !ACCEPTABLE.has(r) && !(r === 'SKIPPED'));
+    for (const [m, r] of bad) failures.push(`${pid}: ${m}: ${r}`);
+  }
   expect(failures, `plan results failed:\n${failures.join('\n')}`).toEqual([]);
 });

@@ -36,10 +36,54 @@ const baseConfig = {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CibaClient = any;
-function seededCibaClients(): { client: CibaClient; client2: CibaClient } | null {
+// The per-cell CIBA client reader: the private_key_jwt cells read the
+// jwks clients (client_id(ciba) + private_jwks(ciba)); the mtls cells
+// read the self-signed cert clients (client_id(ciba-mtls-main) + the
+// ciba_mtls_* sections, OIDF-ALL-1).
+function seededCibaClients(authType: 'private_key_jwt' | 'mtls' = 'private_key_jwt'): { client: CibaClient; client2: CibaClient; mtls?: { cert: string; key: string; ca?: string }; mtls2?: { cert: string; key: string; ca?: string } } | null {
   const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
+  if (authType === 'mtls') {
+    const cid = text.match(/client_id\(ciba-mtls-main\)=([a-f0-9]+)/)?.[1];
+    const cid2 = text.match(/client_id\(ciba-mtls-second\)=([a-f0-9]+)/)?.[1];
+    const jwksLine = text.match(/private_jwks\(ciba-mtls-main\)=(\{.*\})/)?.[1];
+    const jwks2Line = text.match(/private_jwks\(ciba-mtls-second\)=(\{.*\})/)?.[1];
+    const certB64 = text.match(/ciba_mtls_cert_der_b64\(main\)=([A-Za-z0-9+\/=]+)/)?.[1];
+    const certB642 = text.match(/ciba_mtls_cert_der_b64\(second\)=([A-Za-z0-9+\/=]+)/)?.[1];
+    const keyPem = text.match(/ciba_mtls_key_pem\(main\)=([\s\S]*?)-----END PRIVATE KEY-----/)?.[1];
+    const keyPem2 = text.match(/ciba_mtls_key_pem\(second\)=([\s\S]*?)-----END PRIVATE KEY-----/)?.[1];
+    if (!cid || !cid2 || !jwksLine || !jwks2Line || !certB64 || !certB642 || !keyPem || !keyPem2) return null;
+    let jwks: unknown = null;
+    let jwks2: unknown = null;
+    try {
+      jwks = JSON.parse(jwksLine);
+      jwks2 = JSON.parse(jwks2Line);
+    } catch {
+      return null;
+    }
+    const keyB64 = keyPem.replace(/-----(BEGIN|END) [A-Z ]+-----/g, '').replace(/\s+/g, '');
+    const keyB642 = keyPem2.replace(/-----(BEGIN|END) [A-Z ]+-----/g, '').replace(/\s+/g, '');
+    const caPem = readFileSync(process.env.SENTIN8_TLS_CA_PEM!
+      ?? join(resultsDir(), '..', '..', '..', '.run', 'secrets', 'acme-ca', 'root-ca.crt'), 'utf8');
+    const mk = (id: string, keys: unknown): CibaClient => ({
+      client_id: id,
+      client_auth_type: 'mtls',
+      token_endpoint_auth_method: 'self_signed_tls_client_auth',
+      scope: 'openid profile email phone address offline_access',
+      redirect_uri: suiteCallback(),
+      notification_endpoint: suiteCibaNotification(),
+      hint_type: 'login_hint',
+      hint_value: certUser().email,
+      jwks: { keys: [keys] },
+    });
+    return {
+      client: mk(cid, jwks),
+      client2: mk(cid2, jwks2),
+      mtls: { cert: certB64, key: keyB64, ca: caPem },
+      mtls2: { cert: certB642, key: keyB642, ca: caPem },
+    };
+  }
   const cid = text.match(/client_id\(ciba\)=([a-f0-9]+)/)?.[1];
   const cid2 = text.match(/client_id\(ciba2\)=([a-f0-9]+)/)?.[1];
   const jwksLine = text.match(/private_jwks\(ciba\)=(\{.*\})/)?.[1];
@@ -75,12 +119,15 @@ function seededCibaClients(): { client: CibaClient; client2: CibaClient } | null
 
 const BASE_VARIANT = {
   fapi_ciba_profile: 'plain_fapi',
-  client_auth_type: 'private_key_jwt',
   client_registration: 'static_client',
 };
+// The FULL 4-cell catalog matrix (OIDF-ALL-1): ciba_mode (poll|ping) x
+// client_auth_type (private_key_jwt|mtls).
 const CELLS = [
-  { ...BASE_VARIANT, ciba_mode: 'poll' },
-  { ...BASE_VARIANT, ciba_mode: 'ping' },
+  { ...BASE_VARIANT, client_auth_type: 'private_key_jwt', ciba_mode: 'poll' },
+  { ...BASE_VARIANT, client_auth_type: 'private_key_jwt', ciba_mode: 'ping' },
+  { ...BASE_VARIANT, client_auth_type: 'mtls', ciba_mode: 'poll' },
+  { ...BASE_VARIANT, client_auth_type: 'mtls', ciba_mode: 'ping' },
 ];
 
 
@@ -116,11 +163,13 @@ test('FAPI CIBA ID1 - run every module to terminal', async ({ browser }) => {
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);
   const failures: string[] = [];
-  const cellClients = seededCibaClients();
-  if (!cellClients) {
-    failures.push('seeded CIBA client missing - re-run the seed with CONFORMANCE_PROFILE=fapi_ciba');
-  } else {
-    for (const v of CELLS) {
+  for (const v of CELLS) {
+    const cellClients = seededCibaClients(v.client_auth_type as 'private_key_jwt' | 'mtls');
+    if (!cellClients) {
+      failures.push(`seeded CIBA client missing for cell ${v.client_auth_type}/${v.ciba_mode} - re-run the seed with CONFORMANCE_PROFILE=fapi_ciba`);
+      continue;
+    }
+    {
       const tls = seededFapiTlsSections();
       const plan = await suiteApi.createPlan(
         'fapi-ciba-id1-test-plan',
@@ -128,7 +177,7 @@ test('FAPI CIBA ID1 - run every module to terminal', async ({ browser }) => {
         v,
       );
       planIds.push(plan.id);
-      logStep(`VARIANT ciba_mode=${v.ciba_mode} -> plan ${plan.id} (${plan.modules.length} modules)`);
+      logStep(`VARIANT ${v.client_auth_type}/${v.ciba_mode} -> plan ${plan.id} (${plan.modules.length} modules)`);
       for (const m of (await suiteApi.getPlan(plan.id)).modules) {
         if (onlyList.length > 0 && !onlyList.includes(m.testModule)) {
           logStep(`SKIP-ONLY ${m.testModule}`);
@@ -157,11 +206,11 @@ test('FAPI CIBA ID1 - run every module to terminal', async ({ browser }) => {
           expect(result, `${m.testModule} must not fail/skip`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
         }
         if (run.warnings.length > 0) {
-          failures.push(`[${v.ciba_mode}] ${m.testModule}: ${run.warnings.join(' | ')}`);
+          failures.push(`[${v.client_auth_type}/${v.ciba_mode}] ${m.testModule}: ${run.warnings.join(' | ')}`);
         }
         const out = join(resultsDir(), 'logs');
         mkdirSync(out, { recursive: true });
-        writeFileSync(join(out, `ciba-${v.ciba_mode}-${m.testModule}.json`), JSON.stringify(run.log));
+        writeFileSync(join(out, `ciba-${v.client_auth_type}-${v.ciba_mode}-${m.testModule}.json`), JSON.stringify(run.log));
       }
       writeFileSync(join(resultsDir(), 'ciba-poll-plan.txt'), planIds.join('\n'));
     }

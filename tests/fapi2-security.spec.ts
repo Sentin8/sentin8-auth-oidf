@@ -156,16 +156,26 @@ function seededFapiMtlsClients(): { client: FapiClient; client2: FapiClient; mtl
 // and publishes the client's PRIVATE jwks to seed-out - the suite signs
 // client_assertions from config.client.jwks.
 const FAPI2_BASE = {
-  openid: 'openid_connect',
   fapi_profile: 'plain_fapi',
 };
+// The FULL catalog matrix (OIDF-ALL-1): sender_constrain (mtls|dpop) x
+// client_auth_type (private_key_jwt|mtls) + the plain_oauth variant of
+// the primary cells (the catalog's FAPI2SP cells: MTLS+MTLS,
+// MTLS+DPoP, private key+MTLS, private key+DPoP, OpenID Connect,
+// plain OAuth).
 const VARIANTS = [
-  { ...FAPI2_BASE, client_auth_type: 'private_key_jwt', sender_constrain: 'dpop' },
-  { ...FAPI2_BASE, client_auth_type: 'mtls', sender_constrain: 'mtls' },
+  { ...FAPI2_BASE, openid: 'openid_connect', client_auth_type: 'private_key_jwt', sender_constrain: 'dpop' },
+  { ...FAPI2_BASE, openid: 'openid_connect', client_auth_type: 'mtls', sender_constrain: 'mtls' },
+  { ...FAPI2_BASE, openid: 'openid_connect', client_auth_type: 'mtls', sender_constrain: 'dpop' },
+  { ...FAPI2_BASE, openid: 'openid_connect', client_auth_type: 'private_key_jwt', sender_constrain: 'mtls' },
+  { ...FAPI2_BASE, openid: 'plain_oauth', client_auth_type: 'private_key_jwt', sender_constrain: 'dpop' },
+  { ...FAPI2_BASE, openid: 'plain_oauth', client_auth_type: 'mtls', sender_constrain: 'mtls' },
 ];
 // The seed CELL the variant runs against (kept OUT of the variant sent
-// to the suite - the suite rejects unknown variant parameters).
-const CELL: Record<string, string> = { dpop: 'dpop', mtls: 'mtls' };
+// to the suite - the suite rejects unknown variant parameters). The
+// private_key_jwt + mtls-sender cell reads the mtls-pk jwks client
+// (the seed registers one per sender cell).
+const CELL: Record<string, string> = { dpop: 'dpop', mtls: 'mtls-pk' };
 type FapiVariant = { client_auth_type: string; sender_constrain: string; openid: string; fapi_profile: string };
 const cellFor = (v: FapiVariant): string => CELL[v.sender_constrain] ?? v.sender_constrain;
 
@@ -192,13 +202,15 @@ test('FAPI2 Security Profile - run every module-variant to terminal', async ({ b
     .split(',').map((x) => x.trim()).filter(Boolean);
   const failures: string[] = [];
   for (const v of VARIANTS) {
-    // The mtls cell's static client is the CERT pair (self_signed_tls_client_auth,
-    // DESIGN 9a.12); the private_key_jwt cells use the jwks clients.
+    // The mtls client-auth cells' static client is the CERT pair
+    // (self_signed_tls_client_auth, DESIGN 9a.12); the private_key_jwt
+    // cells use the jwks clients (the mtls-SENDER pk cell reads the
+    // mtls-pk jwks client).
     const cellClients = v.client_auth_type === 'mtls'
       ? seededFapiMtlsClients()
       : seededFapiClients(cellFor(v));
     if (!cellClients) {
-      failures.push(`seeded FAPI2 client for cell ${cellFor(v)} missing - re-run the seed with CONFORMANCE_PROFILE=fapi_2`);
+      failures.push(`seeded FAPI2 client for cell ${v.client_auth_type}/${v.sender_constrain} missing - re-run the seed with CONFORMANCE_PROFILE=fapi_2`);
       continue;
     }
     const plan = await suiteApi.createPlan(
@@ -208,7 +220,7 @@ test('FAPI2 Security Profile - run every module-variant to terminal', async ({ b
     );
     const cellPlan = plan.id;
     planIds.push(cellPlan);
-    logStep(`VARIANT ${v.client_auth_type}/${v.sender_constrain} -> plan ${cellPlan} (${plan.modules.length} modules)`);
+    logStep(`VARIANT ${v.openid}/${v.client_auth_type}/${v.sender_constrain} -> plan ${cellPlan} (${plan.modules.length} modules)`);
     const page = await browser.newPage({ ignoreHTTPSErrors: true });
     for (const m of (await suiteApi.getPlan(cellPlan)).modules) {
       if (onlyList.length > 0 && !onlyList.includes(m.testModule)) {

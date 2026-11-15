@@ -151,6 +151,43 @@ const config: SuiteTestConfig = {
 
 const harnessBrowserBlock = standardBrowserAutomation();
 
+// The HAIP issuer plan's FLOW cells (OIDF-ALL-1): the plan's
+// vci_authorization_code_flow_variant axis (wallet_initiated |
+// issuer_initiated) + the offer parameter variant for the
+// issuer-initiated cells (vci_credential_offer_variant: by_value |
+// by_reference). One plan per cell - the flow variant selects the
+// module slices (the issuer-initiated family exercises the credential
+// OFFER surface: vci.credential_offer_redirect_url drives the browser
+// to the issuer's offer landing, the wallet then runs the same
+// authorization-code + credential-issuance chain).
+const FLOW_CELLS = [
+  { flow: 'wallet_initiated', offer: undefined, label: 'wallet-initiated' },
+  { flow: 'issuer_initiated', offer: 'by_value', label: 'issuer-initiated-by-value' },
+  { flow: 'issuer_initiated', offer: 'by_reference', label: 'issuer-initiated-by-reference' },
+];
+
+// The offer-cell config additions: the by_value cell's offer lands as
+// the JSON in vci.credential_offer_redirect_url's credential_offer
+// query param; the by_reference cell resolves the SAME offer through
+// vci.credential_offer_uri (the landing accepts both forms - auth
+// wallet.rs: the by-value JSON is inline; the by-reference URI resolves
+// server-side to the same JSON).
+function offerCellConfig(cell: { flow: string; offer?: string }): Record<string, unknown> {
+  const base = certAuthHost();
+  const vciCfg: Record<string, unknown> = {};
+  if (cell.flow === 'issuer_initiated') {
+    vciCfg.credential_offer_redirect_url =
+      `${base}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
+    vciCfg.credential_offer_endpoint =
+      `${base}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
+    if (cell.offer === 'by_reference') {
+      vciCfg.credential_offer_uri =
+      `${base}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
+    }
+  }
+  return { vci: vciCfg };
+}
+
 test.beforeAll(async () => {
   await SuiteApi.waitAuthReady();
   suiteApi = new SuiteApi();
@@ -167,22 +204,30 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);
   const failures: string[] = [];
-
-  const plan = await suiteApi.createPlan(
+  const planIds: string[] = [];
+  for (const flowCell of FLOW_CELLS) {
+    const cellConfig = { ...config, ...offerCellConfig(flowCell) } as SuiteTestConfig;
+    const plan = await suiteApi.createPlan(
     'oid4vci-1_0-issuer-haip-test-plan',
-    config,
+    cellConfig,
     // The HAIP plan FIXES client_auth_type=client_attestation,
     // fapi_profile=vci_haip, sender_constrain=dpop and
     // fapi_request_method=unsigned per module (plan-set axes are
     // REJECTED on create with "Variant has been set by user, but test
-    // plan already sets this variant"), leaving credential_format
-    // USER-SELECTED (create without it 400s). Runner-created modules
-    // resolve their OTHER variants server-side from the plan modules
-    // (POST /api/runner with an EMPTY body - a JSON body answers 400).
-    { credential_format: 'sd_jwt_vc' },
+    // plan already sets this variant"), leaving credential_format +
+    // the flow/offer axes USER-SELECTED (create without them 400s).
+    // The flow cell axes: vci_authorization_code_flow_variant (wallet
+    // | issuer initiated) +, for the issuer cells,
+    // vci_credential_offer_variant (by_value | by_reference).
+    {
+      credential_format: 'sd_jwt_vc',
+      vci_authorization_code_flow_variant: flowCell.flow,
+      ...(flowCell.offer ? { vci_credential_offer_variant: flowCell.offer } : {}),
+    },
   );
   planId = plan.id;
-  logStep(`plan ${planId}: ${plan.modules.length} module-variants`);
+  planIds.push(plan.id);
+  logStep(`plan ${planId} (flow=${flowCell.label}): ${plan.modules.length} module-variants`);
   {
     // Per-module variant resolution: the plan leaves SOME axes
     // user-selected per module (e.g. happy-flow needs sender_constrain
@@ -217,7 +262,7 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
       // sleep BEFORE the browser round - the default 600s window would
       // expire mid-sleep (f2 spec pattern): 960s for it.
       const run = await runModule(suiteApi, browser, planId, m.testModule,
-        { ...config, browser: browserAutomationFor(m.testModule) },
+        { ...cellConfig, browser: browserAutomationFor(m.testModule) },
         /expired-request_uri/i.test(m.testModule) ? 960_000 : 600_000,
         ownVariant);
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
@@ -230,14 +275,16 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
       // 9a.19).
       expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
       if (run.warnings.length > 0) {
-        failures.push(`${m.testModule}: ${run.warnings.join(' | ')}`);
+        failures.push(`[${flowCell.label}] ${m.testModule}: ${run.warnings.join(' | ')}`);
       }
       const out = join(resultsDir(), 'logs');
       mkdirSync(out, { recursive: true });
       // Duplicated modules (plain vs encrypted slices) write
       // distinct logs: the variant axes ride the filename.
       const enc = ownVariant.vci_credential_encryption ?? 'plain';
-      writeFileSync(join(out, `oid4vci-haip-${m.testModule}-${enc}.json`), JSON.stringify(run.log));
+      writeFileSync(join(out, `oid4vci-haip-${flowCell.label}-${m.testModule}-${enc}.json`), JSON.stringify(run.log));
+    }
+    writeFileSync(join(resultsDir(), `oid4vci-haip-plan-${flowCell.label}.txt`), plan.id);
     }
   }
   expect(failures, `warning-zero violations:\n${failures.join('\n')}`).toEqual([]);
@@ -245,12 +292,19 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
 
 test('plan-level results are all acceptable', async () => {
   test.skip(!!(process.env.OIDF_MODULES ?? '').trim(), 'singles run - plan gate skipped');
-  const results = await planResults(suiteApi, planId);
-  // HAIPFIX-1: the plan gate is UNCONDITIONAL - every module-variant
-  // terminal PASSED (the duplicate-slice runner runs BOTH entries, the
-  // multi-DPoP negative rejects at the wire, the refresh-token module
-  // rides the OC-27b posture rule). No sanctioned verdicts remain
-  // (auth DESIGN 9a.19).
-  const bad = [...results.entries()].filter(([m, r]) => r && !ACCEPTABLE.has(r));
-  expect(bad, 'FAILED/SKIPPED/INTERRUPTED modules').toEqual([]);
+  const failures: string[] = [];
+  const latestIds = (readFileSync(join(resultsDir(), 'oid4vci-haip-steps.log'), 'utf8')
+    .match(/plan ([A-Za-z0-9]+) \(flow=/g) ?? []).map((l) => l.match(/plan ([A-Za-z0-9]+)/)?.[1] ?? '');
+  const gateIds = latestIds.length > 0 ? latestIds : (planId ? [planId] : []);
+  for (const pid of gateIds) {
+    const results = await planResults(suiteApi, pid);
+    // HAIPFIX-1: the plan gate is UNCONDITIONAL - every module-variant
+    // terminal PASSED (the duplicate-slice runner runs BOTH entries, the
+    // multi-DPoP negative rejects at the wire, the refresh-token module
+    // rides the OC-27b posture rule). No sanctioned verdicts remain
+    // (auth DESIGN 9a.19).
+    const bad = [...results.entries()].filter(([m, r]) => r && !ACCEPTABLE.has(r));
+    for (const [m, r] of bad) failures.push(`${pid}/${m}: ${r}`);
+  }
+  expect(failures, 'FAILED/SKIPPED/INTERRUPTED modules').toEqual([]);
 });
