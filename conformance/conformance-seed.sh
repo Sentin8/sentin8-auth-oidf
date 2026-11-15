@@ -1195,6 +1195,18 @@ PYMTLS
       MJSON2="$(dcr "cert-fapi2-mtls-2" "\"token_endpoint_auth_method\":\"self_signed_tls_client_auth\",\"self_signed_tls_client_auth_thumbprint\":\"$THUMB\",\"jwks\":$PUBJWKS,\"redirect_uris\":[\"$CALLBACK?dummy1=lorem&dummy2=ipsum\",\"$CALLBACK\"]")"
       emit_client "fapi2-second-mtls" "$MJSON2"
     fi
+    if [ "$cl" = main ]; then
+      # The mtls/dpop CROSS cell (DPoPRS-2, auth DESIGN 9a.22): a
+      # DEDICATED self_signed_tls_client_auth client whose tokens are
+      # DPoP-constrained (dpop_bound) - the suite's
+      # ensure-holder-of-key-required negative keeps this cert, drops
+      # the DPoP proof, and reads the 4xx; the plain mtls cell (the
+      # cert IS the constraint) keeps its happy path. Same cert
+      # material (the cert authenticates; the registration
+      # discriminates).
+      XDJSON="$(dcr "cert-fapi2-mtls-dpop" "\"token_endpoint_auth_method\":\"self_signed_tls_client_auth\",\"self_signed_tls_client_auth_thumbprint\":\"$THUMB\",\"jwks\":$PUBJWKS,\"dpop_bound\":true")"
+      emit_client "fapi2-mtls-dpop" "$XDJSON"
+    fi
     echo "mtls_cert_pem($cl)=$CERT_PEM" >> "$SEED_OUT"
     echo "mtls_key_pem($cl)=$KEY_PEM" >> "$SEED_OUT"
     echo "mtls_cert_der_b64($cl)=$DER64" >> "$SEED_OUT"

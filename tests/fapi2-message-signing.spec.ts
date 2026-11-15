@@ -80,11 +80,15 @@ function seededFapiClients(cell: string): { client: FapiClient; client2: FapiCli
  * suite presents the SAME certificate on its token + resource calls
  * (RFC 8705 self-signed; auth binds `cnf.x5t#S256` at the mint).
  */
-function seededFapiMtlsClients(): { client: FapiClient; client2: FapiClient; mtls?: { cert: string; key: string; ca?: string }; mtls2?: { cert: string; key: string; ca?: string } } | null {
+function seededFapiMtlsClients(crossDpop: boolean): { client: FapiClient; client2: FapiClient; mtls?: { cert: string; key: string; ca?: string }; mtls2?: { cert: string; key: string; ca?: string } } | null {
   const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
-  const cid = text.match(/client_id\(fapi2-mtls\)=([a-f0-9]+)/)?.[1];
+  // The mtls/dpop cross cell reads its DEDICATED dpop_bound client
+  // (fapi2-mtls-dpop, DPoPRS-2); the plain mtls cell reads the base
+  // pair.
+  const cell = crossDpop ? 'fapi2-mtls-dpop' : 'fapi2-mtls';
+  const cid = text.match(new RegExp(`client_id\\(${cell}\\)=([a-f0-9]+)`))?.[1];
   const cid2 = text.match(/client_id\(fapi2-second-mtls\)=([a-f0-9]+)/)?.[1];
   // The suite's PEMFormatter stripPEM decodes the config values AS
   // BASE64 (PEM-body extraction + strict Base64). The seed publishes
@@ -203,8 +207,12 @@ test('FAPI2 Message Signing - run every module-variant to terminal', async ({ br
   for (const v of VARIANTS) {
     // The mtls cell's static client is the CERT pair (self_signed_tls_client_auth,
     // DESIGN 9a.12); the private_key_jwt cells use the jwks clients.
+    // The mtls/dpop CROSS cell uses the DEDICATED dpop_bound client
+    // (fapi2-mtls-dpop, DPoPRS-2 - auth DESIGN 9a.22).
     const cellClients = v.client_auth_type === 'mtls'
-      ? seededFapiMtlsClients()
+      ? (v.sender_constrain === 'dpop'
+          ? seededFapiMtlsClients(true)
+          : seededFapiMtlsClients(false))
       : seededFapiClients(cellFor(v));
     if (!cellClients) {
       failures.push(`seeded FAPI2 client for cell ${v.client_auth_type}/${v.sender_constrain} missing - re-run the seed with CONFORMANCE_PROFILE=fapi_2_message_signing`);
