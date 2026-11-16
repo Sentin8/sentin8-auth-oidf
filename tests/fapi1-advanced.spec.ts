@@ -58,16 +58,33 @@ function seededFapi1Clients(cell: { client_auth_type: string }): { client: FapiC
     if (!cid || !cid2 || !certB64 || !certB642 || !keyPem || !keyPem2) return null;
     const keyB64 = keyPem.replace(/-----(BEGIN|END) [A-Z ]+-----/g, '').replace(/\s+/g, '');
     const keyB642 = keyPem2.replace(/-----(BEGIN|END) [A-Z ]+-----/g, '').replace(/\s+/g, '');
-    const mk = (id: string, cert: string, key: string): FapiClient => ({
+    // The suite's ValidateClientJWKsPrivatePart demands the client's
+    // signing jwks in the config (the client still signs its request
+    // objects with it - the CERT authenticates, the jwks signs).
+    const jwksLine = text.match(/private_jwks\(fapi2-mtls-main\)=\{.*\}/)?.[0]?.split('=').slice(1).join('=');
+    const jwksLine2 = text.match(/private_jwks\(fapi2-mtls-second\)=\{.*\}/)?.[0]?.split('=').slice(1).join('=');
+    if (!jwksLine || !jwksLine2) return null;
+    let jwksObj: unknown = null;
+    let jwksObj2: unknown = null;
+    try {
+      jwksObj = JSON.parse(jwksLine);
+      jwksObj2 = JSON.parse(jwksLine2);
+    } catch {
+      return null;
+    }
+    const mk = (id: string, cert: string, key: string, jwks: unknown): FapiClient => ({
       client_id: id,
       client_auth_type: 'mtls',
       token_endpoint_auth_method: 'self_signed_tls_client_auth',
       scope: 'openid profile email phone address offline_access',
       redirect_uri: suiteCallback(),
+      jwks: Array.isArray((jwks as { keys?: unknown[] })?.keys)
+        ? (jwks as { keys: unknown[] })
+        : { keys: [jwks] },
     });
     return {
-      client: mk(cid, certB64, keyB64),
-      client2: mk(cid2, certB642, keyB642),
+      client: mk(cid, certB64, keyB64, jwksObj),
+      client2: mk(cid2, certB642, keyB642, jwksObj2),
     };
   }
   // The private_key_jwt cells: cell name dpop for the dpop-sender cell,
