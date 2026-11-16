@@ -224,12 +224,18 @@ case "$PROFILE" in
   standard)
     FLAGS='"require_par":false,"require_jarm":false,"require_dpop":false,"require_iss":false,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
   fapi_2)
-    FLAGS='"require_par":true,"require_jarm":true,"require_dpop":true,"require_iss":true,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
+    # FAPI2-SP 5.3.2.1-6: a sender-constraining credential is required -
+    # WHICH one (DPoP vs mTLS) is the suite's per-cell sender_constrain
+    # axis, NOT an env-wide posture. The env does NOT blanket-demand DPoP;
+    # the dpop cells register dpop_bound clients (the per-registration
+    # gate, OC-31 DPoPRS-2) and the mtls cells present their certs.
+    FLAGS='"require_par":true,"require_jarm":true,"require_dpop":false,"require_iss":true,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
   fapi_2_message_signing)
     # The FINAL msg-signing plan's "request signing" = SIGNED REQUEST OBJECTS
     # (JAR signed_non_repudiation) - the happy flow's token POST is PLAIN;
     # no RFC 9421 HTTP-message-signature or introspection posture.
-    FLAGS='"require_par":true,"require_jarm":true,"require_dpop":true,"require_iss":true,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
+    # The sender-constraining credential is per-cell (see the fapi_2 note).
+    FLAGS='"require_par":true,"require_jarm":true,"require_dpop":false,"require_iss":true,"require_mtls":false,"require_http_signatures":false,"require_jwt_introspection":false';;
   fapi_1_advanced)
     FLAGS='"require_par":true,"require_jarm":true,"require_dpop":false,"require_iss":true,"require_mtls":true,"require_http_signatures":false,"require_jwt_introspection":false';;
   fapi_ciba)
@@ -1090,8 +1096,17 @@ PYGEN
       fi
       PRIVJWKS="$(echo "$KEYJSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['private']))")"
       PUBJWKS="$(echo "$KEYJSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['public']))")"
+      # FAPI2-SP 5.3.2.1-6 (per-cell, OC-31 DPoPRS-2): the dpop
+      # cell's clients register dpop_bound - the sender-constraining
+      # credential for this cell is DPoP, and the per-registration
+      # gate demands a live proof at every token request (the env's
+      # require_dpop stays OFF: the mtls cells present certs).
+      DPOP_FLAG=""
+      if [ "$cell" = dpop ]; then
+        DPOP_FLAG=',"dpop_bound":true'
+      fi
       if [ "$cl" = main ]; then
-        FJSON="$(dcr "cert-fapi2-$cell" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$PUBJWKS")"
+        FJSON="$(dcr "cert-fapi2-$cell" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$PUBJWKS$DPOP_FLAG")"
         emit_client "fapi2-$cell" "$FJSON"
         echo "private_jwks(fapi2-$cell)=$PRIVJWKS" >> "$SEED_OUT"
       else
@@ -1104,7 +1119,7 @@ PYGEN
         # match per entry; the dummy preserves the happy-flow
         # verbatim requirement, the plain callback is the negative's
         # error target).
-        FJSON2="$(dcr "cert-fapi2-$cell-2" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$PUBJWKS,\"redirect_uris\":[\"$CALLBACK?dummy1=lorem&dummy2=ipsum\",\"$CALLBACK\"]")"
+        FJSON2="$(dcr "cert-fapi2-$cell-2" "\"token_endpoint_auth_method\":\"private_key_jwt\",\"jwks\":$PUBJWKS$DPOP_FLAG,\"redirect_uris\":[\"$CALLBACK?dummy1=lorem&dummy2=ipsum\",\"$CALLBACK\"]")"
         emit_client "fapi2-second-$cell" "$FJSON2"
         echo "private_jwks(fapi2-second-$cell)=$PRIVJWKS" >> "$SEED_OUT"
       fi
