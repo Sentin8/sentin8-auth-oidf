@@ -153,13 +153,15 @@ const harnessBrowserBlock = standardBrowserAutomation();
 
 // The HAIP issuer plan's FLOW cells (OIDF-ALL-1): the plan's
 // vci_authorization_code_flow_variant axis (wallet_initiated |
-// issuer_initiated) + the offer parameter variant for the
-// issuer-initiated cells (vci_credential_offer_variant: by_value |
-// by_reference). One plan per cell - the flow variant selects the
-// module slices (the issuer-initiated family exercises the credential
-// OFFER surface: vci.credential_offer_redirect_url drives the browser
-// to the issuer's offer landing, the wallet then runs the same
-// authorization-code + credential-issuance chain).
+// issuer_initiated). The offer parameter variant
+// (vci_credential_offer_variant: by_value | by_reference) belongs to
+// the WALLET plan family (AbstractVCIWalletTest registers it - the
+// plan-create 400 "Unknown variant parameter" is the issuer plan
+// rejecting a wallet-family axis); the ISSUER plan drives the offer
+// form through CONFIG members only: credential_offer_redirect_url
+// (the by_value inline JSON) vs credential_offer_uri (the
+// by_reference resolution) - offerCellConfig below selects the form,
+// one plan per flow cell.
 const FLOW_CELLS = [
   { flow: 'wallet_initiated', offer: undefined, label: 'wallet-initiated' },
   { flow: 'issuer_initiated', offer: 'by_value', label: 'issuer-initiated-by-value' },
@@ -226,14 +228,14 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
     // fapi_request_method=unsigned per module (plan-set axes are
     // REJECTED on create with "Variant has been set by user, but test
     // plan already sets this variant"), leaving credential_format +
-    // the flow/offer axes USER-SELECTED (create without them 400s).
-    // The flow cell axes: vci_authorization_code_flow_variant (wallet
-    // | issuer initiated) +, for the issuer cells,
-    // vci_credential_offer_variant (by_value | by_reference).
+    // the flow axis USER-SELECTED (create without them 400s).
+    // The flow cell axis: vci_authorization_code_flow_variant (wallet
+    // | issuer initiated). The offer FORM rides the config members
+    // (offerCellConfig) - vci_credential_offer_variant is a WALLET-plan
+    // axis the issuer plan rejects on create.
     {
       credential_format: 'sd_jwt_vc',
       vci_authorization_code_flow_variant: flowCell.flow,
-      ...(flowCell.offer ? { vci_credential_offer_variant: flowCell.offer } : {}),
     },
   );
   planId = plan.id;
