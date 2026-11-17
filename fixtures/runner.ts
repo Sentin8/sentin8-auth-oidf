@@ -329,10 +329,13 @@ async function runModuleOnPage(
   // (the minted verifier request is single-use; re-submitting would
   // deliver a fresh request the module never asked for).
   const uriSubmitted = new Set<string>();
-  // One offer submission per runner (the suite's
+  // One offer submission PER parked wait (the suite's
   // VCIWaitForCredentialOffer consumes the first well-formed call; the
-  // pre-authorized codes it hands out are single-use).
-  const offerSubmitted = new Set<string>();
+  // pre-authorized codes it hands out are single-use). The marker's
+  // OCCURRENCE COUNT keys the re-arm: the multiple-clients module
+  // re-parks the same endpoint for the SECOND client's offer
+  // (OFFERHOOK2-1 - a once-per-runner Set starved that wait).
+  const offerSubmitted = new Map<string, number>();
   // The offer endpoint config member rides EVERY plan config on the
   // issuer-initiated cells - the hook reads it once per module.
   const vciConfig = (config as { vci?: Record<string, unknown> }).vci ?? {};
@@ -440,15 +443,21 @@ async function runModuleOnPage(
     // endpoint") - modules on the same plan that never park (metadata
     // tests) reject an unsolicited submission to their instance root as
     // an unexpected incoming request (the battery-10 hook misfire).
+    // The wait-marker count comparison: the suite logs the parking
+    // entry EVERY time the module parks (the multiple-clients module
+    // parks twice - client1 then client2, OFFERHOOK2-1). Count the
+    // occurrences and submit when the count has RISEN past what we
+    // already served.
+    const waitMarkerCount = (await suiteApi.getLog(runnerId)).filter((e) =>
+      /Waiting for call to credential offer/i.test(String(e?.msg ?? '')),
+    ).length;
+    const servedWait = offerSubmitted.get(runnerId) ?? 0;
     if (
       status === 'WAITING' &&
       offerEndpoint &&
-      !offerSubmitted.has(runnerId) &&
-      (await suiteApi.getLog(runnerId)).some((e) =>
-        /Waiting for call to credential offer/i.test(String(e?.msg ?? '')),
-      )
+      waitMarkerCount > servedWait
     ) {
-      offerSubmitted.add(runnerId);
+      offerSubmitted.set(runnerId, waitMarkerCount);
       try {
         const alias = String((config as { alias?: string }).alias ?? '');
         // The suite's own exposed offer endpoint: base_url = the alias

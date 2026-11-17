@@ -285,8 +285,11 @@ test('FAPI2 Message Signing - run every module-variant to terminal', async ({ br
       // The expired-request_uri module parks the suite in a 600-second
       // expiry sleep BEFORE the (error-page) browser round - the shared
       // 600s drive window would expire DURING the sleep. Give the known
-      // long-sleep modules a 960s window (600 sleep + browser rounds).
-      const driveMs = /expired-request_uri/i.test(m.testModule) ? 960_000 : undefined;
+      // long-sleep modules a 1080s window (600 sleep + browser rounds
+      // + variant-creation/polling margin; battery-11: 960s proved ZERO
+      // margin on the last variant block - the harness returned WAITING
+      // with auth already past the PAR push), F2EXPURI-1.
+      const driveMs = /expired-request_uri/i.test(m.testModule) ? 1080_000 : undefined;
       const run = await runModule(suiteApi, browser, cellPlan, m.testModule,
         { ...config, ...cellClients, browser: browserAutomationFor(m.testModule) },
         driveMs);

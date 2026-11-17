@@ -97,10 +97,17 @@ function seededFapi1Clients(cell: { client_auth_type: string }): { client: FapiC
   // client (battery-10's over-correction) would demand the cert the
   // flow never presents.
   const cellName = 'fapi1-pk';
-  const cid = text.match(new RegExp(`client_id\(${cellName}\)=([a-f0-9]+)`))?.[1];
-  const cid2 = text.match(new RegExp(`client_id\(fapi1-second-pk\)=([a-f0-9]+)`))?.[1];
-  const jwksLine = text.match(new RegExp(`private_jwks\(${cellName}\)=(\{.*\})`))?.[1];
-  const jwksLine2 = text.match(new RegExp(`private_jwks\(fapi1-second-pk\)=(\{.*\})`))?.[1];
+  // LITERAL regexes (not template-built): the fapi1 spec compiles under
+  // a transpiler that STRIPS single backslashes inside template literals
+  // - `\(${cellName}\)` became an UNESCAPED paren pair (a capture group,
+  // demanding the text 'client_idfapi1-pk=') and every pk-cell lookup
+  // returned null (battery-11 round-1/2 'seeded FAPI1 client missing for
+  // cell private_key_jwt/...'). The mtls arm above uses literal regexes
+  // and never regressed - the pk arm matches its shape.
+  const cid = text.match(/client_id\(fapi1-pk\)=([a-f0-9]+)/)?.[1];
+  const cid2 = text.match(/client_id\(fapi1-second-pk\)=([a-f0-9]+)/)?.[1];
+  const jwksLine = text.match(/private_jwks\(fapi1-pk\)=(\{.*\})/)?.[1];
+  const jwksLine2 = text.match(/private_jwks\(fapi1-second-pk\)=(\{.*\})/)?.[1];
   if (!cid || !cid2 || !jwksLine || !jwksLine2) return null;
   let jwksObj: unknown = null;
   let jwksObj2: unknown = null;
