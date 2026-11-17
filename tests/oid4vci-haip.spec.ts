@@ -216,7 +216,14 @@ test.afterAll(async () => {
 });
 
 test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ browser }) => {
-  test.setTimeout(1_800_000);
+  // The plan carries the FULL fapi2-security-profile module family (the
+  // HAIP plan duplicates it under the haip fapi_profile) - the family's
+  // expired-request_uri module alone rides the 600s suite sleep; with
+  // the F2EXPURI-1 margins the two-plan drive outgrew the 30m budget
+  // (the battery-11 revalidation timed out at 1800s with the last fapi2
+  // module still driving). 90m covers the family + the credential plans
+  // with headroom.
+  test.setTimeout(5_400_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);
   const failures: string[] = [];
@@ -276,10 +283,11 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
       // DENY flow (consent/login cancel) exactly like the FAPI2 cells.
       // The expired-request_uri module parks in the suite's 600s expiry
       // sleep BEFORE the browser round - the default 600s window would
-      // expire mid-sleep (f2 spec pattern): 960s for it.
+      // expire mid-sleep (f2 spec pattern): 1080s for it (F2EXPURI-1 -
+      // 960s proved zero margin in the battery's last variant block).
       const run = await runModule(suiteApi, browser, planId, m.testModule,
         { ...cellConfig, browser: browserAutomationFor(m.testModule) },
-        /expired-request_uri/i.test(m.testModule) ? 960_000 : 600_000,
+        /expired-request_uri/i.test(m.testModule) ? 1080_000 : 600_000,
         ownVariant);
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
       // the campaign gate is UNCONDITIONAL - every module
