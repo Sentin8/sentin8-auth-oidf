@@ -174,23 +174,26 @@ const FLOW_CELLS = [
 // vci.credential_offer_uri (the landing accepts both forms - auth
 // wallet.rs: the by-value JSON is inline; the by-reference URI resolves
 // server-side to the same JSON).
-// The offer-cell config additions: the by_value cell's offer lands as
-// the JSON in vci.credential_offer_redirect_url's credential_offer
-// query param; the by_reference cell resolves the SAME offer through
-// vci.credential_offer_uri (the landing accepts both forms - auth
-// wallet.rs: the by-value JSON is inline; the by-reference URI resolves
-// server-side to the same JSON).
+// The offer-cell config additions (auth DESIGN 9a.20 - the BY_REFERENCE
+// offer document service): the by_value cell's offer lands as the JSON
+// in vci.credential_offer_redirect_url's credential_offer query param;
+// the by_reference cell resolves the SAME offer through
+// vci.credential_offer_uri. Both members point at the DOCUMENT
+// endpoint (`/oauth/credential-offer/document`) - the standalone offer
+// JSON resource the suite can open in a browser (the by-value inline
+// form) or fetch server-side (the by-reference form; the LANDING page
+// only serves the browser redirect, it cannot answer a plain GET with
+// the offer body).
 function offerCellConfig(cell: { flow: string; offer?: string }): Record<string, unknown> {
   const base = certAuthHost();
   const vciCfg: Record<string, unknown> = {};
   if (cell.flow === 'issuer_initiated') {
-    vciCfg.credential_offer_redirect_url =
-      `${base}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
-    vciCfg.credential_offer_endpoint =
-      `${base}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
+    const docUrl =
+      `${base}/oauth/credential-offer/document?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
+    vciCfg.credential_offer_redirect_url = docUrl;
+    vciCfg.credential_offer_endpoint = docUrl;
     if (cell.offer === 'by_reference') {
-      vciCfg.credential_offer_uri =
-      `${base}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
+      vciCfg.credential_offer_uri = docUrl;
     }
   }
   // MERGE, never replace: the spread at the call site overlays the
@@ -251,7 +254,7 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
     // map: the HAIP plan DUPLICATES three modules under different
     // vci_credential_encryption values (plain vs encrypted) - a
     // name-keyed map collapses the duplicates to the last entry and
-    // the sibling slice stays PENDING at the plan gate (the HAIPFIX-1
+    // the sibling slice stays PENDING at the plan gate (the
     // runner contract; auth DESIGN 9a.19 plan census).
     for (const modEntry of (await suiteApi.getPlan(planId)).modules) {
       const m = modEntry;
@@ -279,7 +282,7 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
         /expired-request_uri/i.test(m.testModule) ? 960_000 : 600_000,
         ownVariant);
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
-      // HAIPFIX-1: the campaign gate is UNCONDITIONAL - every module
+      // the campaign gate is UNCONDITIONAL - every module
       // terminal PASSED, zero warnings, NO sanctioned failures or
       // skips (the two former blesses are CLOSED: the multi-DPoP
       // negative rejects at the wire - the sentin8-tls middleware
@@ -311,7 +314,7 @@ test('plan-level results are all acceptable', async () => {
   const gateIds = latestIds.length > 0 ? latestIds : (planId ? [planId] : []);
   for (const pid of gateIds) {
     const results = await planResults(suiteApi, pid);
-    // HAIPFIX-1: the plan gate is UNCONDITIONAL - every module-variant
+    // the plan gate is UNCONDITIONAL - every module-variant
     // terminal PASSED (the duplicate-slice runner runs BOTH entries, the
     // multi-DPoP negative rejects at the wire, the refresh-token module
     // rides the OC-27b posture rule). No sanctioned verdicts remain

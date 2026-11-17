@@ -87,13 +87,20 @@ function seededFapi1Clients(cell: { client_auth_type: string }): { client: FapiC
       client2: mk(cid2, certB642, keyB642, jwksObj2),
     };
   }
-  // The private_key_jwt cells: cell name dpop for the dpop-sender cell,
-  // mtls-pk for the mtls-sender private-key cell (the seed's naming).
-  const cellName = 'dpop';
-  const cid = text.match(new RegExp(`client_id\\(fapi2-${cellName}\\)=([a-f0-9]+)`))?.[1];
-  const cid2 = text.match(new RegExp(`client_id\\(fapi2-second-${cellName}\\)=([a-f0-9]+)`))?.[1];
-  const jwksLine = text.match(new RegExp(`private_jwks\\(fapi2-${cellName}\\)=(\\{.*\\})`))?.[1];
-  const jwksLine2 = text.match(new RegExp(`private_jwks\\(fapi2-second-${cellName}\\)=(\\{.*\\})`))?.[1];
+  // The private_key_jwt cells ride the fapi1-pk family (auth DESIGN
+  // 9a.22 - the registration-to-cell mapping):
+  // the FAPI1-ADV pk cells authenticate by assertion and NEVER
+  // present a client certificate, so the registration maps to
+  // NEITHER sender posture - sender_constrain=any, the profile gate
+  // governs. The fapi2 dpop client (the first battery-9 failure)
+  // would demand a DPoP proof no FAPI1 plan sends; the fapi2 mtls-pk
+  // client (battery-10's over-correction) would demand the cert the
+  // flow never presents.
+  const cellName = 'fapi1-pk';
+  const cid = text.match(new RegExp(`client_id\(${cellName}\)=([a-f0-9]+)`))?.[1];
+  const cid2 = text.match(new RegExp(`client_id\(fapi1-second-pk\)=([a-f0-9]+)`))?.[1];
+  const jwksLine = text.match(new RegExp(`private_jwks\(${cellName}\)=(\{.*\})`))?.[1];
+  const jwksLine2 = text.match(new RegExp(`private_jwks\(fapi1-second-pk\)=(\{.*\})`))?.[1];
   if (!cid || !cid2 || !jwksLine || !jwksLine2) return null;
   let jwksObj: unknown = null;
   let jwksObj2: unknown = null;

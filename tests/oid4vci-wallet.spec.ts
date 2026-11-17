@@ -210,7 +210,7 @@ test('OID4VCI Wallet - run every module-variant to terminal', async ({ browser }
   planId = plan.id;
   logStep(`plan ${planId}: ${plan.modules.length} module-variants`);
   {
-    // Per-entry variant resolution (the HAIPFIX-1 duplicate-slice rule,
+    // Per-entry variant resolution (the duplicate-slice rule,
     // rig README 'Runner contract'): pass EACH plan entry's OWN
     // modules[].variant to the runner create - a name-keyed map would
     // collapse duplicated modules onto the last entry's slice.

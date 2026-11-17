@@ -329,6 +329,14 @@ async function runModuleOnPage(
   // (the minted verifier request is single-use; re-submitting would
   // deliver a fresh request the module never asked for).
   const uriSubmitted = new Set<string>();
+  // One offer submission per runner (the suite's
+  // VCIWaitForCredentialOffer consumes the first well-formed call; the
+  // pre-authorized codes it hands out are single-use).
+  const offerSubmitted = new Set<string>();
+  // The offer endpoint config member rides EVERY plan config on the
+  // issuer-initiated cells - the hook reads it once per module.
+  const vciConfig = (config as { vci?: Record<string, unknown> }).vci ?? {};
+  const offerEndpoint = String(vciConfig.credential_offer_endpoint ?? '');
   // CIBA: the OP's out-of-band user approval. The suite only polls the
   // token endpoint; the authentication device = OUR harness. When the
   // runner log shows the backchannel response (auth_req_id), drive the
@@ -408,6 +416,82 @@ async function runModuleOnPage(
         logStep(`  submitted verifier request to ${submitUrl.slice(0, 60)}: HTTP ${submitted.status}`);
       } catch (e) {
         logStep(`  uriInput submit failed: ${(e as Error).message.slice(0, 160)}`);
+      }
+    }
+    // The issuer-plan offer wait (auth DESIGN 9a.20 - the harness
+    // hook): the ISSUER plan's issuer_initiated cells park
+    // WAITING in VCIWaitForCredentialOffer - the SUITE plays the
+    // issuer, OUR side plays the wallet. The module resumes only when a
+    // request carrying credential_offer (BY_VALUE JSON) or
+    // credential_offer_uri (BY_REFERENCE - an https URL the suite
+    // fetches server-side; OID4VCI-1FINAL-4.1, the two are mutually
+    // exclusive) hits the suite-host endpoint it exposed. The hook
+    // plays the wallet ONCE per WAITING state and delivers the form the
+    // cell names: BY_VALUE cells submit the offer JSON minted by our
+    // DOCUMENT endpoint inline (`credential_offer`), BY_REFERENCE
+    // cells submit the DOCUMENT endpoint's URL
+    // (`credential_offer_uri` - the suite's server-side fetch parses
+    // the response body as the offer; the BY-VALUE landing page cannot
+    // serve that fetch, it 302s for browsers only).
+    //
+    // TRIGGER (auth DESIGN 9a.20): the hook must fire ONLY after the
+    // module's own log carries the parking entry
+    // (VCIWaitForCredentialOffer: "Waiting for call to credential offer
+    // endpoint") - modules on the same plan that never park (metadata
+    // tests) reject an unsolicited submission to their instance root as
+    // an unexpected incoming request (the battery-10 hook misfire).
+    if (
+      status === 'WAITING' &&
+      offerEndpoint &&
+      !offerSubmitted.has(runnerId) &&
+      (await suiteApi.getLog(runnerId)).some((e) =>
+        /Waiting for call to credential offer/i.test(String(e?.msg ?? '')),
+      )
+    ) {
+      offerSubmitted.add(runnerId);
+      try {
+        const alias = String((config as { alias?: string }).alias ?? '');
+        // The suite's own exposed offer endpoint: base_url = the alias
+        // test-instance root, the suite appends /credential_offer.
+        const suiteOfferUrl =
+          `https://localhost.emobix.co.uk:8443/test/a/${alias}/credential_offer`;
+        // The offer DOCUMENT endpoint (auth DESIGN 9a.20): mints the
+        // offer JSON (issuer + configuration id + fresh issuer_state)
+        // as a fetchable resource; the harness-bound pass-through
+        // params ride the URL (the same binding the landing reads).
+        // The lookahead keeps an already-document URL stable (no
+        // /document/document double-append).
+        const docUrl = offerEndpoint.replace(
+          /\/oauth\/credential-offer(?!\/document)\b/,
+          '/oauth/credential-offer/document',
+        );
+        // The cell's form: by_reference cells carry
+        // vci.credential_offer_uri (offerCellConfig); everything else
+        // on the issuer plan is the by-value submission.
+        const byReference = String(vciConfig.credential_offer_uri ?? '') !== '';
+        if (byReference) {
+          // BY_REFERENCE: hand the suite the document URL - its
+          // server-side fetch resolves the offer JSON.
+          const resp = await fetch(
+            `${suiteOfferUrl}?credential_offer_uri=${encodeURIComponent(docUrl)}`,
+            { method: 'GET' },
+          );
+          logStep(`  offer hook: submitted credential_offer_uri=${docUrl.slice(0, 70)}: HTTP ${resp.status}`);
+        } else {
+          // BY_VALUE: mint the document and submit the JSON inline -
+          // as a QUERY-STRING param (the suite's
+          // VCIValidateCredentialOfferRequestParams reads
+          // query_string_params; a form body is never parsed).
+          const doc = await fetch(docUrl, { method: 'GET' });
+          const offer = (await doc.json()) as unknown;
+          const resp = await fetch(
+            `${suiteOfferUrl}?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`,
+            { method: 'GET' },
+          );
+          logStep(`  offer hook: submitted inline credential_offer (doc HTTP ${doc.status}): HTTP ${resp.status}`);
+        }
+      } catch (e) {
+        logStep(`  offer hook failed: ${(e as Error).message.slice(0, 160)}`);
       }
     }
     // A RE-ARMED drive (the 45s WAITING re-arm) must not fire after the

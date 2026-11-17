@@ -103,7 +103,7 @@ test('Front-Channel Logout OP - run every module to terminal', async ({ browser 
       // (static_client - the seeded cert-fcl client) + response_type (the
       // code flow) at plan create; the OTHER axes resolve server-side
       // from the plan's modules - the per-entry dict rides the runner
-      // create (the HAIPFIX-1 duplicate contract).
+      // create (the duplicate contract).
       { client_registration: 'static_client', response_type: 'code' },
     );
     planId = plan.id;

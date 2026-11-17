@@ -41,7 +41,7 @@ const harnessBrowserBlock = standardBrowserAutomation();
 // PRIVATE jwks (the suite signs client_assertions with it).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FapiClient = any;
-function seededFapiClients(cell: string): { client: FapiClient; client2: FapiClient } | null {
+function seededFapiClients(cell: string, includeOpenid = true): { client: FapiClient; client2: FapiClient } | null {
   const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
@@ -62,7 +62,15 @@ function seededFapiClients(cell: string): { client: FapiClient; client2: FapiCli
     client_id: id,
     client_auth_type: 'private_key_jwt',  
     token_endpoint_auth_method: 'private_key_jwt',
-    scope: 'openid profile email phone address offline_access',
+    // The per-cell scope (the plain_oauth scope addendum, auth DESIGN
+    // 9a.2): the suite's FAPI2ProfileBehavior rejects a plan whose variant
+    // axis is plain_oauth while the client scope carries 'openid' - the
+    // plain_oauth cells ride the OAuth-only scope, the openid_connect
+    // cells keep it (the suite's isOpenId id_token mandate reads THIS
+    // value, not the variant axis).
+    scope: includeOpenid
+      ? 'openid profile email phone address offline_access'
+      : 'profile email phone address offline_access',
     redirect_uri: suiteCallback(),
     // The seed's doc may be a BARE JWK (one key) or the multi-key JWKS
     // (ES256 + RSA, the suite's RS256-negative needs the RSA key to
@@ -111,7 +119,7 @@ function seededFapiClients(cell: string): { client: FapiClient; client2: FapiCli
  * suite presents the SAME certificate on its token + resource calls
  * (RFC 8705 self-signed; auth binds `cnf.x5t#S256` at the mint).
  */
-function seededFapiMtlsClients(crossDpop: boolean): { client: FapiClient; client2: FapiClient; mtls?: { cert: string; key: string; ca?: string }; mtls2?: { cert: string; key: string; ca?: string } } | null {
+function seededFapiMtlsClients(crossDpop: boolean, includeOpenid = true): { client: FapiClient; client2: FapiClient; mtls?: { cert: string; key: string; ca?: string }; mtls2?: { cert: string; key: string; ca?: string } } | null {
   const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
   if (!existsSync(seedOut)) return null;
   const text = readFileSync(seedOut, 'utf8');
@@ -154,7 +162,11 @@ function seededFapiMtlsClients(crossDpop: boolean): { client: FapiClient; client
     client_id: id2,
     client_auth_type: 'mtls',
     token_endpoint_auth_method: 'self_signed_tls_client_auth',
-    scope: 'openid profile email phone address offline_access',
+    // The per-cell scope (the plain_oauth scope addendum, auth DESIGN
+    // 9a.2) - same split as the pk helper above.
+    scope: includeOpenid
+      ? 'openid profile email phone address offline_access'
+      : 'profile email phone address offline_access',
     redirect_uri: suiteCallback(),
     // The seed's doc may be a BARE JWK or the multi-key JWKS
     // (ES256 + RSA, the RS256-negative signer) - pass through.
@@ -245,11 +257,16 @@ test('FAPI2 Security Profile - run every module-variant to terminal', async ({ b
     // ensure-holder-of-key-required negative keeps this client's cert,
     // drops the DPoP proof, and reads the 4xx - the plain mtls cell
     // (the cert IS the constraint) keeps its happy path.
+    // The per-cell scope follows the variant axis (auth DESIGN 9a.2):
+    // openid_connect cells keep the scope's openid value, the plain_oauth
+    // cells drop it (the suite's FAPI2ProfileBehavior rejects openid +
+    // PLAIN_OAUTH at variant initialization).
+    const includeOpenid = v.openid !== 'plain_oauth';
     const cellClients = v.client_auth_type === 'mtls'
       ? (v.sender_constrain === 'dpop'
-          ? seededFapiMtlsClients(true)
-          : seededFapiMtlsClients(false))
-      : seededFapiClients(cellFor(v));
+          ? seededFapiMtlsClients(true, includeOpenid)
+          : seededFapiMtlsClients(false, includeOpenid))
+      : seededFapiClients(cellFor(v), includeOpenid);
     if (!cellClients) {
       failures.push(`seeded FAPI2 client for cell ${v.client_auth_type}/${v.sender_constrain} missing - re-run the seed with CONFORMANCE_PROFILE=fapi_2`);
       continue;
@@ -293,7 +310,7 @@ test('FAPI2 Security Profile - run every module-variant to terminal', async ({ b
         .filter((e: { result?: string; msg?: string }) => e.result === 'SKIPPED')
         .map((e: { msg?: string }) => e.msg ?? '')
         .join(' | ');
-      // HAIPFIX-1: the multi-DPoP negative is NO LONGER sanctioned - the
+      // The multi-DPoP negative is NO LONGER sanctioned - the
       // sentin8-tls context middleware preserves the two-line DPoP shape
       // (sdk-v0.6.24), so the wire serves the RFC 9449 7.1 reject and the
       // module finishes PASSED (the former JVM-collapse FAIL-SANCTION is
