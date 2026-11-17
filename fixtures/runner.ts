@@ -331,11 +331,19 @@ async function runModuleOnPage(
   const uriSubmitted = new Set<string>();
   // One offer submission PER parked wait (the suite's
   // VCIWaitForCredentialOffer consumes the first well-formed call; the
-  // pre-authorized codes it hands out are single-use). The marker's
-  // OCCURRENCE COUNT keys the re-arm: the multiple-clients module
-  // re-parks the same endpoint for the SECOND client's offer
-  // (OFFERHOOK2-1 - a once-per-runner Set starved that wait).
-  const offerSubmitted = new Map<string, number>();
+  // pre-authorized codes it hands out are single-use). The waits key on
+  // the SUITE's LOG ENTRY IDs: the suite re-parks the same endpoint per
+  // wallet role (the multiple-clients module parks twice - client1 then
+  // client2, OFFERHOOK2-1) re-emitting the marker under a NEW entry id.
+  // A COUNT comparison collides with the /api/log's bounded window (the
+  // entries rotate out, the count DROPS, the hook re-fires forever - the
+  // battery-11 offer storm, ~19 submissions in 60s until the suite's
+  // alias-conflict guard killed the module); served marker IDs are
+  // rotation-proof: a re-park is a NEW id, an old id is never re-served.
+  // The cap bounds the worst case (a misconfigured module re-parking
+  // forever must not hold the alias hostage).
+  const offerServedIds = new Map<string, Set<string>>();
+  const OFFER_SUBMISSION_CAP = 3;
   // The offer endpoint config member rides EVERY plan config on the
   // issuer-initiated cells - the hook reads it once per module.
   const vciConfig = (config as { vci?: Record<string, unknown> }).vci ?? {};
@@ -443,21 +451,32 @@ async function runModuleOnPage(
     // endpoint") - modules on the same plan that never park (metadata
     // tests) reject an unsolicited submission to their instance root as
     // an unexpected incoming request (the battery-10 hook misfire).
-    // The wait-marker count comparison: the suite logs the parking
+    // The SERVED-MARKER-ID comparison: the suite logs the parking
     // entry EVERY time the module parks (the multiple-clients module
-    // parks twice - client1 then client2, OFFERHOOK2-1). Count the
-    // occurrences and submit when the count has RISEN past what we
-    // already served.
-    const waitMarkerCount = (await suiteApi.getLog(runnerId)).filter((e) =>
+    // parks twice - client1 then client2, OFFERHOOK2-1), each under a
+    // NEW log entry id. Submit once per UNSERVED marker id; the bounded
+    // /api/log window rotates entries out (the count comparison re-fired
+    // on rotation), but a served ID is never re-served.
+    const servedIds = offerServedIds.get(runnerId) ?? new Set<string>();
+    const waitMarkers = (await suiteApi.getLog(runnerId)).filter((e) =>
       /Waiting for call to credential offer/i.test(String(e?.msg ?? '')),
-    ).length;
-    const servedWait = offerSubmitted.get(runnerId) ?? 0;
+    );
+    const unserved = waitMarkers.filter(
+      (e) => !servedIds.has(String(e?._id ?? '')),
+    );
     if (
       status === 'WAITING' &&
       offerEndpoint &&
-      waitMarkerCount > servedWait
+      unserved.length > 0 &&
+      servedIds.size < OFFER_SUBMISSION_CAP
     ) {
-      offerSubmitted.set(runnerId, waitMarkerCount);
+      // Serve the OLDEST unserved marker (the waits resolve in order).
+      const first = [...waitMarkers]
+        .filter((e) => !servedIds.has(String(e?._id ?? '')))
+        .shift();
+      const markerId = String(first?._id ?? '');
+      servedIds.add(markerId);
+      offerServedIds.set(runnerId, servedIds);
       try {
         const alias = String((config as { alias?: string }).alias ?? '');
         // The suite's own exposed offer endpoint: base_url = the alias
