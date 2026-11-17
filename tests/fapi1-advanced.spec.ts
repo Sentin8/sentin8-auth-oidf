@@ -205,7 +205,11 @@ test('FAPI1 Advanced - run every module to terminal', async ({ browser }) => {
         logStep(`SKIP ${m.testModule} (already ${m.result})`);
         continue;
       }
-      const driveMs = /expired-request_uri/i.test(m.testModule) ? 960_000 : undefined;
+      // The expired-request_uri module parks in the suite's 600s expiry
+      // sleep before the browser round (F2EXPURI-1, battery-11: the same
+      // margin the fapi2-signing spec applies - 960s proved zero margin
+      // in the battery's last variant block; 1080s = 960 + the pad).
+      const driveMs = /expired-request_uri/i.test(m.testModule) ? 1080_000 : undefined;
       const tls = seededFapiTlsSections();
       const run = await runModule(suiteApi, browser, plan.id, m.testModule,
         { ...config, ...cellClients, ...tls, browser: browserAutomationFor(m.testModule) } as SuiteTestConfig,
