@@ -344,6 +344,10 @@ async function runModuleOnPage(
   // forever must not hold the alias hostage).
   const offerServedIds = new Map<string, Set<string>>();
   const OFFER_SUBMISSION_CAP = 3;
+  // The WALCERT-1 wallet campaign's served issuer ledger: one drive per
+  // exposed mock-issuer (a re-park under the same module carries a FRESH
+  // credential_issuer per the suite's unique fake-PID convention).
+  const walletServedIssuers = new Map<string, Set<string>>();
   // The offer endpoint config member rides EVERY plan config on the
   // issuer-initiated cells - the hook reads it once per module.
   const vciConfig = (config as { vci?: Record<string, unknown> }).vci ?? {};
@@ -520,6 +524,135 @@ async function runModuleOnPage(
         }
       } catch (e) {
         logStep(`  offer hook failed: ${(e as Error).message.slice(0, 160)}`);
+      }
+    }
+    // The WALCERT-1 wallet campaign (the CLIENT-side drive): the wallet
+    // plan's module parks WAITING having exposed its MOCK-ISSUER env
+    // strings (credential_issuer / metadata urls / config hint) in the
+    // runner record's `exposed` block - the offer URL is NOT carried
+    // there; the module's `exposed.credential_offer_redirect_url` IS
+    // (the module sets it right before parking - the wallet's entry
+    // point). THE HOLDER is the system-under-test. The hook drives the
+    // holder's issuance orchestration ONCE per UNSERVED exposed
+    // credential_issuer id (the rotation-proof ledger keyed on the
+    // runner record's `exposed.credential_issuer` value - one
+    // credential_issuer per offer; a re-park under the same module
+    // carries a FRESH value per the mock issuer's unique display-name
+    // convention `Fake PID <instanceId>`):
+    //   1. POST <holder>/v1/issuance/prepare {offer_url} - the holder's
+    //      SDK parses the offer, fetches the RFC8414 metadata, pushes the
+    //      PAR, and returns {session, authorize_url}.
+    //   2. GET the authorize_url - the suite's mock-issuer authorize
+    //      endpoint answers with the code redirect to the holder's
+    //      registered redirect (the suite callback stand-in that the
+    //      plan config's client block declares).
+    //   3. POST <holder>/v1/issuance/complete {session, code, state} -
+    //      the holder's SDK exchanges the code (PKCE), fetches the
+    //      nonce, mints the proof, requests the credential.
+    const walletCampaign = (config as { wallet?: Record<string, unknown> }).wallet ?? {};
+    const holderUrl = String(walletCampaign.holder_url ?? '');
+    const exposedBlock = ((runner ?? {}) as Record<string, Record<string, unknown>>).exposed ?? {};
+    const exposedIssuer = String(exposedBlock.credential_issuer ?? '');
+    const walletServedIds = walletServedIssuers.get(runnerId) ?? new Set<string>();
+    const walletReady =
+      status === 'WAITING' &&
+      holderUrl &&
+      exposedIssuer &&
+      exposedBlock.credential_configuration_id_hint !== undefined;
+    if (walletReady && !walletServedIds.has(exposedIssuer)) {
+      walletServedIds.add(exposedIssuer);
+      walletServedIssuers.set(runnerId, walletServedIds);
+      const holderQuery = `?user_id=${encodeURIComponent(String(walletCampaign.holder_user_id ?? ''))}`;
+      const prepareUrl = `${holderUrl}${String(walletCampaign.prepare_path ?? '/v1/issuance/prepare')}${holderQuery}`;
+      try {
+        // The offer URL the module exposes: the runner record's
+        // vci.credential_offer_redirect_url entry (the module's own
+        // redirect to the offer - the wallet's entry point), falling
+        // back to the plan-config endpoint member.
+        // The offer URL the module exposes: the browser-block's urls
+        // The WALLET-INITIATED flow: the module creates NO offer - it
+        // exposes the mock-issuer endpoints and WAITS for the wallet's
+        // PAR. The holder's SDK starts from an OFFER, so the hook
+        // BUILDS one from the module's own data: the exposed
+        // credential_issuer + the configuration hint + the module's
+        // generated issuer_state (the VCIGenerateIssuerState log
+        // entry). The offer rides the suite's credential_offer/
+        // endpoint URL as the credential_offer query param (the
+        // holder's parse_offer_url reads it back by value).
+        const issuerStateLog = (await suiteApi.getLog(runnerId)).find((e) =>
+          e?.src === 'VCIGenerateIssuerState' && e?.issuer_state,
+        );
+        const issuerState = String(issuerStateLog?.issuer_state ?? '');
+        if (!issuerState) {
+          throw new Error('the module exposed no issuer_state (pre-park state)');
+        }
+        const offerJson = JSON.stringify({
+          credential_issuer: exposedIssuer,
+          credential_configuration_ids: [exposedBlock.credential_configuration_id_hint],
+          grants: { authorization_code: { issuer_state: issuerState } },
+        });
+        const offerUrl =
+          exposedIssuer.replace(/\/$/, '') +
+          '/credential_offer?credential_offer=' +
+          encodeURIComponent(offerJson);
+        logStep(`  wallet intake: prepare against ${prepareUrl.slice(0, 70)}`);
+        const prepResp = await fetch(prepareUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            offer_url: offerUrl,
+            issuer_metadata_url: exposedBlock.credential_issuer_metadata_url ?? undefined,
+            as_metadata_url: exposedBlock.oauth_authorization_server_metadata_url ?? undefined,
+          }),
+        });
+        if (!prepResp.ok) {
+          throw new Error(`prepare: HTTP ${prepResp.status} ${(await prepResp.text()).slice(0, 140)}`);
+        }
+        const prep = (await prepResp.json()) as { session?: string; authorize_url?: string };
+        if (!prep.authorize_url || !prep.session) {
+          throw new Error('prepare returned no authorize_url/session');
+        }
+        logStep(`  wallet intake: authorize journey ${prep.authorize_url.slice(0, 70)}`);
+        // The authorize journey: GET the authorize URL and follow the
+        // redirect chain to the CODE-CARRYING redirect - but the chain
+        // STOPS at the holder's callback redirect (the suite's redirect
+        // to the registered callback). The callback URL is read from
+        // the Location header only and NEVER fetched: hitting the
+        // suite's callback endpoint inside the module journey is scored
+        // 'Got unexpected HTTP call to callback' (the callback visit is
+        // the module browser's business, not the wallet's).
+        const authResp = await fetch(prep.authorize_url, { redirect: 'manual' });
+        let redirectTarget = authResp.headers.get('location') ?? '';
+        let hops = 0;
+        while (redirectTarget && hops < 5) {
+          if (redirectTarget.includes('/callback')) break;
+          const hopResp = await fetch(redirectTarget, { redirect: 'manual' });
+          const nextLoc = hopResp.headers.get('location') ?? '';
+          if (!nextLoc) break;
+          redirectTarget = nextLoc;
+          hops += 1;
+        }
+        // The code + state from the callback redirect's query (never
+        // fetched - see above).
+        const code = new URL(redirectTarget, 'https://placeholder.invalid').searchParams.get('code') ?? '';
+        const stateParam = new URL(redirectTarget, 'https://placeholder.invalid').searchParams.get('state') ?? '';
+        if (!code) {
+          throw new Error(`the authorize round produced no code (final ${redirectTarget.slice(0, 100)})`);
+        }
+        const completeUrl = `${holderUrl}${String(walletCampaign.complete_path ?? '/v1/issuance/complete')}${holderQuery}`;
+        logStep(`  wallet intake: complete against ${completeUrl.slice(0, 70)}`);
+        const compResp = await fetch(completeUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session: prep.session, code, state: stateParam }),
+        });
+        if (!compResp.ok) {
+          throw new Error(`complete: HTTP ${compResp.status} ${(await compResp.text()).slice(0, 140)}`);
+        }
+        const stored = (await compResp.json()) as unknown;
+        logStep(`  wallet intake: flow completed - ${JSON.stringify(stored).slice(0, 120)}`);
+      } catch (e) {
+        logStep(`  wallet intake failed: ${(e as Error).message.slice(0, 200)}`);
       }
     }
     // A RE-ARMED drive (the 45s WAITING re-arm) must not fire after the

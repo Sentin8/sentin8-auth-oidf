@@ -49,7 +49,6 @@ function seededVciClients(): { client: VciClient; client2: VciClient; attesterJw
     attesterJwks = null;
   }
   const leafB64 = text.match(/haip_issuer_leaf_der_b64\(haip\)=([A-Za-z0-9+/=]+)/)?.[1] ?? '';
-  const xyLine = text.match(/haip_issuer_xy\(haip\)=([a-zA-Z0-9-]+) ([A-Za-z0-9+_/-]+) ([A-Za-z0-9+_/-]+)/) ?? null;
   const cid = text.match(/client_id\(vci\)=([a-f0-9]+)/)?.[1] ?? '';
   const cid2 = text.match(/client_id\(vci2\)=([a-f0-9]+)/)?.[1] ?? '';
   const jwksLine = text.match(/private_jwks\(vci\)=(\{.*\})/)?.[1] ?? '';
@@ -101,12 +100,17 @@ function seededVciClients(): { client: VciClient; client2: VciClient; attesterJw
   // ES256 signing JWK whose x5c[0] is the RIG-MINTED issuance leaf (a
   // CA-signed cert - the HAIP 6.1.1 no-self-signed rule; the rig CA is
   // the pinned trust anchor).
-  const signingJwk = leafB64 && xyLine
-    ? {
-        kty: 'EC', crv: 'P-256', alg: 'ES256', use: 'sig',
-        kid: xyLine[1], x: xyLine[2], y: xyLine[3],
-        x5c: [leafB64],
-      }
+  // The private half (RFC 7517 'd', haip_issuer_priv - minted whole
+  // by the seed): the suite's OWN SD-JWT credential mint
+  // (CreateSdJwtCredential) signs with credential.signing_jwk and
+  // DefaultJWSSignerFactory rejects a public-only key
+  // (JWKException expectedPrivate) - a public-only signing_jwk breaks
+  // the mint. The seed hands the FULL private JWK (kid/x/y/d) and the
+  // leaf x5c wraps exactly that key (one issuance identity).
+  const privLine = text.match(/haip_issuer_priv\(haip\)=(\{.*\})/)?.[1] ?? '';
+  const privParsed = privLine ? (JSON.parse(privLine) as Record<string, unknown>) : null;
+  const signingJwk = leafB64 && privParsed
+    ? { ...privParsed, x5c: [leafB64] }
     : null;
   return {
     client: mk(cid, parse(jwksLine), pubOnly(jwksLine)),
@@ -171,16 +175,54 @@ test.beforeAll(async () => {
   (config.server as Record<string, unknown>).jwks = jwks;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (config as Record<string, unknown>).server_jwks = jwks;
-  // The issuer-initiated offer URL: the offer LANDING page rides the ISSUER
-  // (DESIGN 9a.20) with the client/redirect/scope bound through pass-through
-  // query params (the suite's UriComponentsBuilder preserves them when it
-  // appends credential_offer), and the issuer_state we hand the offer grant.
-  const issuerState = `wlt-${Date.now()}`;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (config.vci as Record<string, unknown>).issuer_state = issuerState;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (config.vci as Record<string, unknown>).credential_offer_endpoint =
-    `${certAuthHost()}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
+  // The WALCERT-1 campaign (the CLIENT-side wiring): when WALCERT_HOLDER_URL
+  // is exported, THE HOLDER is the system-under-test and the suite plays the
+  // MOCK ISSUER - the plan config's client block becomes the holder's real
+  // published identity (its client_id + JWK; the suite validates every
+  // request the holder's SDK makes), and the runner's wallet-intake hook
+  // drives the holder's orchestration endpoints with the suite-hosted offer.
+  // Without the env the spec keeps its issuer-side form (the suite simulates
+  // the wallet client against OUR auth's landing - the WLT-1 shape).
+  const holderUrl = process.env.WALCERT_HOLDER_URL ?? '';
+  const holderUserId = process.env.WALCERT_HOLDER_USER_ID ?? '';
+  if (holderUrl) {
+    const clientId = process.env.WALCERT_CLIENT_ID ?? 'wallet8-holder';
+    const pubJwk = JSON.parse(process.env.WALCERT_CLIENT_JWKS ?? '{}');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config as Record<string, unknown>).client = {
+      client_id: clientId,
+      token_endpoint_auth_method: 'client_secret_basic',
+      scope: 'openid profile email offline_access',
+      jwks: pubJwk.keys ? pubJwk : { keys: [] },
+      redirect_uri: suiteCallback(),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config as Record<string, unknown>).wallet = {
+      holder_url: holderUrl,
+      holder_user_id: holderUserId,
+      prepare_path: '/v1/issuance/prepare',
+      complete_path: '/v1/issuance/complete',
+    };
+    // The offer endpoint rides the SUITE (the mock issuer hosts the offer;
+    // the runner's wallet-intake hook hands its URL to the holder) - the
+    // issuer-side landing wiring is DROPPED in campaign mode. The
+    // issuer_state still binds the offer grant (the module echoes it,
+    // VCIVerifyIssuerStateInAuthorizationRequest's mirror-side check).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config.vci as Record<string, unknown>).issuer_state = `wlt-${Date.now()}`;
+    logStep(`WALCERT campaign: wallet SUT = ${holderUrl} (client ${clientId})`);
+  } else {
+    // The issuer-initiated offer URL: the offer LANDING page rides the ISSUER
+    // (DESIGN 9a.20) with the client/redirect/scope bound through pass-through
+    // query params (the suite's UriComponentsBuilder preserves them when it
+    // appends credential_offer), and the issuer_state we hand the offer grant.
+    const issuerState = `wlt-${Date.now()}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config.vci as Record<string, unknown>).issuer_state = issuerState;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config.vci as Record<string, unknown>).credential_offer_endpoint =
+      `${certAuthHost()}/oauth/credential-offer?client_id=${encodeURIComponent(config.client?.client_id ?? '')}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
+  }
   suiteApi = new SuiteApi();
   logStep(`creating plan: ${config.description}`);
 });

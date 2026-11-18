@@ -39,8 +39,9 @@ declare -A FAMILY=(
   [vci-issuer]="cert-vci:sentin8-vci:vci"
   [vci-haip]="cert-haip:sentin8-haip:vci_haip"
   [oid4vp]="cert-vp:sentin8-vp:vp"
+  [vci-wallet]="cert-wallet:sentin8-wallet:vci"
 )
-ORDER=(smoke oidc-basic oidc-config oidc-dynamic logout fcl implicit hybrid formpost sessionmgmt ciba fapi1 fapi2 fapi2-signing vci-issuer vci-haip oid4vp)
+ORDER=(smoke oidc-basic oidc-config oidc-dynamic logout fcl implicit hybrid formpost sessionmgmt ciba fapi1 fapi2 fapi2-signing vci-issuer vci-haip oid4vp vci-wallet)
 
 requested=("$@")
 if [ ${#requested[@]} -eq 0 ] || [ -z "${requested[0]:-}" ]; then
