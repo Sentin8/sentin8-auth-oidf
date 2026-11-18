@@ -233,10 +233,16 @@ test.beforeAll(async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (config.vci as Record<string, unknown>).client_attestation_issuer =
       process.env.WALCERT_ATTESTATION_ISSUER ?? '';
-    // The attester's self-signed leaf PEM (the mock AS's trust anchor -
+    // The attester's ROOT CA PEM (the mock AS's trust anchor -
     // ValidateClientAttestationTrustAnchor requires it; the seed-out
-    // attester_pem line).
+    // attester root_pem line; x5c carries the root-issued leaf only).
     (config.vci as Record<string, unknown>).client_attestation_trust_anchor =
+      process.env.WALCERT_ATTESTATION_ANCHOR_PEM ?? '';
+    // The Key Attestation section (EnsureKeyAttestationTrustAnchorConfigured
+    // - required for HAIP): the same attester root anchors the wallet's
+    // key attestation JWT at the token/credential endpoints.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config.vci as Record<string, unknown>).key_attestation_trust_anchor_pem =
       process.env.WALCERT_ATTESTATION_ANCHOR_PEM ?? '';
     // The mock AS validates via ValidateClientAttestationX5cClaimInProofJwt
     // reading the nested path 'vci.client_attestation_trust_anchor_pem'.
