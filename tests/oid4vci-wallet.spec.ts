@@ -236,7 +236,7 @@ test.beforeAll(async () => {
     // The attester's self-signed leaf PEM (the mock AS's trust anchor -
     // ValidateClientAttestationTrustAnchor requires it; the seed-out
     // attester_pem line).
-    (config.vci as Record<string, unknown>).client_attestation_trust_anchor_pem =
+    (config.vci as Record<string, unknown>).client_attestation_trust_anchor =
       process.env.WALCERT_ATTESTATION_ANCHOR_PEM ?? '';
     // The mock AS validates via ValidateClientAttestationX5cClaimInProofJwt
     // reading the nested path 'vci.client_attestation_trust_anchor_pem'.
