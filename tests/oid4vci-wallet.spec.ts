@@ -210,6 +210,41 @@ test.beforeAll(async () => {
     // VCIVerifyIssuerStateInAuthorizationRequest's mirror-side check).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (config.vci as Record<string, unknown>).issuer_state = `wlt-${Date.now()}`;
+    // The client-attestation identity fields (the campaign env) - the
+    // runner registers them on the holder (POST /v1/attestation-identity)
+    // before the HAIP plan's modules run.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config as Record<string, unknown>).wallet_attestation = {
+      base_url: holderUrl,
+      key_der_b64: process.env.WALCERT_ATTESTATION_KEY_DER_B64 ?? '',
+      x5c: (() => {
+        try {
+          return JSON.parse(process.env.WALCERT_ATTESTATION_X5C ?? '[]');
+        } catch {
+          return [];
+        }
+      })(),
+      issuer: process.env.WALCERT_ATTESTATION_ISSUER ?? '',
+    };
+    // The plan config's vci attestation block (the mock AS's contract):
+    // the issuer id the attestations carry (the profile row's value) -
+    // the suite 400s the configuration when the client_auth variant is
+    // client_attestation without it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config.vci as Record<string, unknown>).client_attestation_issuer =
+      process.env.WALCERT_ATTESTATION_ISSUER ?? '';
+    // The attester's self-signed leaf PEM (the mock AS's trust anchor -
+    // ValidateClientAttestationTrustAnchor requires it; the seed-out
+    // attester_pem line).
+    (config.vci as Record<string, unknown>).client_attestation_trust_anchor_pem =
+      process.env.WALCERT_ATTESTATION_ANCHOR_PEM ?? '';
+    // The mock AS validates via ValidateClientAttestationX5cClaimInProofJwt
+    // reading the nested path 'vci.client_attestation_trust_anchor_pem'.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config.vci as Record<string, unknown>).client_attestation = {
+      trust_anchor: process.env.WALCERT_ATTESTATION_ANCHOR_PEM ?? '',
+      issuer: process.env.WALCERT_ATTESTATION_ISSUER ?? '',
+    };
     logStep(`WALCERT campaign: wallet SUT = ${holderUrl} (client ${clientId})`);
   } else {
     // The issuer-initiated offer URL: the offer LANDING page rides the ISSUER
@@ -279,6 +314,69 @@ test('OID4VCI Wallet - run every module-variant to terminal', async ({ browser }
       writeFileSync(join(out, `oid4vci-wallet-${m.testModule}.json`), JSON.stringify(run.log));
     }
   }
+
+  // The HAIP wallet plan (the OID4VCI-1.0+HAIP-1.0 Wallet cells): the
+  // plan pins client_auth_type=client_attestation - the holder's
+  // attester identity rides POST /v1/attestation-identity (the
+  // campaign env's DER form - a re-seed rotates the attester key) and
+  // every PAR/token attempt carries the OAuth-Client-Attestation pair.
+  const walletAtt = (config as Record<string, unknown>).wallet_attestation as
+    | { base_url?: string; key_der_b64?: string; x5c?: unknown[]; issuer?: string }
+    | undefined;
+  if (walletAtt && walletAtt.base_url && walletAtt.key_der_b64) {
+    const reg = await fetch(`${String(walletAtt.base_url)}/v1/attestation-identity`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key_der_b64: walletAtt.key_der_b64,
+        x5c: walletAtt.x5c ?? [],
+        issuer: walletAtt.issuer ?? '',
+      }),
+    });
+    logStep(`attestation-identity registration: HTTP ${reg.status}`);
+    expect(reg.status, 'the attester identity must register').toBe(200);
+    const haipFlowCells: Array<{ flow?: string; offer?: string }> = [
+      { flow: 'wallet_initiated' },
+      { flow: 'issuer_initiated', offer: 'by_value' },
+      { flow: 'issuer_initiated', offer: 'by_reference' },
+    ];
+    for (const cell of haipFlowCells) {
+      // The plan PINS dpop + plain response variants on every module -
+      // the create rejects a user-set value on a pinned axis ("already
+      // sets this variant"). Only the FREE axes ride the create.
+      const createVariant: Record<string, string> = {
+        credential_format: 'sd_jwt_vc',
+      };
+      if (cell.flow) createVariant.vci_authorization_code_flow_variant = cell.flow;
+      if (cell.offer) createVariant.vci_credential_offer_variant = cell.offer;
+      const haipPlan = await suiteApi.createPlan(
+        'oid4vci-1_0-wallet-haip-test-plan',
+        config,
+        createVariant,
+      );
+      planId = haipPlan.id;
+      logStep(`haip plan ${haipPlan.id} (${cell.flow ?? '?'}/${cell.offer ?? 'n/a'}): ${haipPlan.modules.length} module-variants`);
+      for (const modEntry of (await suiteApi.getPlan(haipPlan.id)).modules) {
+        const m = modEntry;
+        const ownVariant = (m.variant ?? {}) as Record<string, string>;
+        if (m.result) {
+          logStep(`SKIP ${m.testModule} (already ${m.result})`);
+          continue;
+        }
+        const run = await runModule(suiteApi, browser, haipPlan.id, m.testModule,
+          { ...config, browser: harnessBrowserBlock }, 600_000, ownVariant);
+        expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
+        expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
+        if (run.warnings.length > 0) {
+          failures.push(`${m.testModule}: ${run.warnings.join(' | ')}`);
+        }
+        const out = join(resultsDir(), 'logs');
+        mkdirSync(out, { recursive: true });
+        writeFileSync(join(out, `oid4vci-wallet-${m.testModule}.json`), JSON.stringify(run.log));
+      }
+    }
+  }
+
   expect(failures, `warning-zero violations:\n${failures.join('\n')}`).toEqual([]);
 });
 

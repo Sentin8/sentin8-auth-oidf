@@ -340,9 +340,25 @@ x5c = [base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode()]
 leaf_pem = cert.public_bytes(serialization.Encoding.PEM).decode()
 private = {"kty": "EC", "kid": kid, "crv": "P-256", "x": x, "y": y, "d": d_b64, "alg": "ES256", "x5c": x5c}
 public = {"keys": [{"kty": "EC", "kid": kid, "use": "sig", "alg": "ES256", "crv": "P-256", "x": x, "y": y, "x5c": x5c}]}
-print(json.dumps({"private": private, "public": public, "leaf_pem": leaf_pem}))
+from cryptography.hazmat.primitives.serialization import PrivateFormat, NoEncryption
+priv_pem = key.private_bytes(
+    serialization.Encoding.PEM,
+    PrivateFormat.PKCS8,
+    NoEncryption(),
+).decode()
+print(json.dumps({"private": private, "public": public, "leaf_pem": leaf_pem, "priv_pem": priv_pem, "x5c": x5c}))
 PYGENVCIATT
 )"
+VCIATT_KEY_PEM=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('priv_pem','').strip())")
+VCIATT_X5C=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('x5c',[])))")
+# Single-line forms for the seed-out + the campaign env (a PEM's
+# newlines break the env contract): the base64-DER key + the base64
+# leaf (the holder's identity endpoint decodes both forms).
+VCIATT_KEY_DER_B64=$(echo "$VCIATT_KEYS" | python3 -c "
+import json,sys,base64
+pem=json.load(sys.stdin).get('priv_pem','')
+der=''.join(l for l in pem.splitlines() if '-----' not in l).strip()
+print(base64.b64encode(base64.b64decode(der)).decode())")
 VCIATT_PRIV=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['private']))")
 VCIATT_PUB=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['public']))")
 VCIATT_PEM=$(echo "$VCIATT_KEYS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('leaf_pem','').rstrip())")
@@ -1487,11 +1503,21 @@ jwk = {'kty': 'EC', 'kid': 'wallet8-holder-key', 'crv': 'P-256', 'x': b64(Q[0]),
 print(json.dumps({'keys': [jwk]}, separators=(',', ':')))
 PYWJK
 )"
+  # The wallet's client-attestation identity (the HAIP client_attestation
+  # cells): the ATTESTER's key + its x5c chain (+ the issuer id) - the
+  # seed's own vciatt mint (private_jwks(vciatt) + attester_pem) is the
+  # trust domain, so the holder's attestations verify against the profile
+  # row's client_attestation_trust_anchor_pem. The PKCS#8 PEM form comes
+  # from the mint (attester_key_pem line).
   cat >> "$CERT_USER_ENV" <<WALCEOF
 WALCERT_HOLDER_URL=$HOLDERSVC_HOST
 WALCERT_HOLDER_USER_ID=$USER_ID
 WALCERT_CLIENT_ID=wallet8-holder
 WALCERT_CLIENT_JWKS='$WALCERT_JWKS'
+WALCERT_ATTESTATION_KEY_DER_B64='$VCIATT_KEY_DER_B64'
+WALCERT_ATTESTATION_X5C='$VCIATT_X5C'
+WALCERT_ATTESTATION_ISSUER=${WALCERT_ATTESTATION_ISSUER:-https://vci-attester-$ENV_SLUG.conformance-local}
+WALCERT_ATTESTATION_ANCHOR_PEM='$VCIATT_PEM'
 WALCEOF
   log "wallet campaign env appended (holder reachable, holder key derived for $USER_ID)"
 else
