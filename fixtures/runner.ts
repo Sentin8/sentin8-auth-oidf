@@ -567,7 +567,11 @@ async function runModuleOnPage(
         return alias ? `https://localhost.emobix.co.uk:8443/test/a/${alias}/` : '';
       })();
     const configuredHint = exposedBlock.credential_configuration_id_hint
-      ?? cfgVci.credential_configuration_id_hint;
+      ?? cfgVci.credential_configuration_id_hint
+      // The wallet plan publishes NO hint: the suite's sd_jwt_vc default
+      // (the EUDI PID family) is the configuration the mock issuer
+      // advertises - the intake's offer carries it.
+      ?? 'eu.europa.ec.eudi.pid.1';
     const walletServedIds = walletServedIssuers.get(runnerId) ?? new Set<string>();
     const walletReady =
       status === 'WAITING' &&
