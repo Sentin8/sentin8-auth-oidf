@@ -616,13 +616,29 @@ async function runModuleOnPage(
           '/credential_offer?credential_offer=' +
           encodeURIComponent(offerJson);
         logStep(`  wallet intake: prepare against ${prepareUrl.slice(0, 70)}`);
+        // The metadata URLs: the module's exposed ones when present
+        // (the issuance family exposes both), else the RFC 8414
+        // well-known forms derived from the mock issuer identity -
+        // the fapi2-client battery modules host the same metadata
+        // paths but expose no explicit records.
+        const issuerRoot = exposedIssuer.replace(/\/$/, '');
+        const defaultIssuerMeta =
+          `${issuerRoot.replace(/^(https?:\/\/[^/]+)(\/.*)?$/, '$1/.well-known/openid-credential-issuer$2')}/`;
+        const defaultAsMeta =
+          issuerRoot.replace(/^(https?:\/\/[^/]+)(\/.*)?$/, '$1/.well-known/oauth-authorization-server$2');
+        const issuerMetaUrl = String(
+          exposedBlock.credential_issuer_metadata_url ?? defaultIssuerMeta,
+        );
+        const asMetaUrl = String(
+          exposedBlock.oauth_authorization_server_metadata_url ?? defaultAsMeta,
+        );
         const prepResp = await fetch(prepareUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             offer_url: offerUrl,
-            issuer_metadata_url: exposedBlock.credential_issuer_metadata_url ?? undefined,
-            as_metadata_url: exposedBlock.oauth_authorization_server_metadata_url ?? undefined,
+            issuer_metadata_url: issuerMetaUrl,
+            as_metadata_url: asMetaUrl,
           }),
         });
         if (!prepResp.ok) {
