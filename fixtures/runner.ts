@@ -552,13 +552,28 @@ async function runModuleOnPage(
     const walletCampaign = (config as { wallet?: Record<string, unknown> }).wallet ?? {};
     const holderUrl = String(walletCampaign.holder_url ?? '');
     const exposedBlock = ((runner ?? {}) as Record<string, Record<string, unknown>>).exposed ?? {};
-    const exposedIssuer = String(exposedBlock.credential_issuer ?? '');
+    const exposedIssuerRaw = String(exposedBlock.credential_issuer ?? '');
+    // The fapi2-client battery modules wait for the WALLET'S PAR without
+    // exposing a credential_issuer record: the plan config's vci block
+    // carries the exposed issuer + the configuration hint - the fallback
+    // keeps the intake armed for those modules too.
+    const cfgVci = (config as { vci?: Record<string, unknown> }).vci ?? {};
+    const exposedIssuer = exposedIssuerRaw
+      || String(cfgVci.credential_issuer ?? '')
+      || (() => {
+        // The issuer lands in the suite's metadata: the alias-root form
+        // '.../test/a/<alias>/' is the mock issuer's identity.
+        const alias = String((config as { alias?: string }).alias ?? '');
+        return alias ? `https://localhost.emobix.co.uk:8443/test/a/${alias}/` : '';
+      })();
+    const configuredHint = exposedBlock.credential_configuration_id_hint
+      ?? cfgVci.credential_configuration_id_hint;
     const walletServedIds = walletServedIssuers.get(runnerId) ?? new Set<string>();
     const walletReady =
       status === 'WAITING' &&
       holderUrl &&
       exposedIssuer &&
-      exposedBlock.credential_configuration_id_hint !== undefined;
+      configuredHint !== undefined;
     if (walletReady && !walletServedIds.has(exposedIssuer)) {
       walletServedIds.add(exposedIssuer);
       walletServedIssuers.set(runnerId, walletServedIds);
