@@ -608,7 +608,7 @@ async function runModuleOnPage(
         // IssuerState modules (the issuance flow) keep issuing.
         const offerJson = JSON.stringify({
           credential_issuer: exposedIssuer,
-          credential_configuration_ids: [exposedBlock.credential_configuration_id_hint],
+          credential_configuration_ids: [configuredHint],
           grants: { authorization_code: issuerState ? { issuer_state: issuerState } : {} },
         });
         const offerUrl =
