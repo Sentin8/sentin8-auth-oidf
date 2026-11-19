@@ -583,13 +583,14 @@ async function runModuleOnPage(
           e?.src === 'VCIGenerateIssuerState' && e?.issuer_state,
         );
         const issuerState = String(issuerStateLog?.issuer_state ?? '');
-        if (!issuerState) {
-          throw new Error('the module exposed no issuer_state (pre-park state)');
-        }
+        // The fapi2-client battery modules expose NO issuer_state (they
+        // are plain oauth client flows against the mock AS); the offer
+        // then rides the bare authorization_code grant. The VCIGenerate-
+        // IssuerState modules (the issuance flow) keep issuing.
         const offerJson = JSON.stringify({
           credential_issuer: exposedIssuer,
           credential_configuration_ids: [exposedBlock.credential_configuration_id_hint],
-          grants: { authorization_code: { issuer_state: issuerState } },
+          grants: { authorization_code: issuerState ? { issuer_state: issuerState } : {} },
         });
         const offerUrl =
           exposedIssuer.replace(/\/$/, '') +
