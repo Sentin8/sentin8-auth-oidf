@@ -651,6 +651,32 @@ async function runModuleOnPage(
         }
         const stored = (await compResp.json()) as unknown;
         logStep(`  wallet intake: flow completed - ${JSON.stringify(stored).slice(0, 120)}`);
+        // The deferred form (§9): the complete call parked the
+        // transaction - the wallet must re-submit it on the holder's
+        // deferred endpoint after `interval` until the credential
+        // issues (the mock issuer 202s the first pull and issues on a
+        // later one; the module waits for the fetch).
+        const deferredMaybe = stored as { status?: string; transaction_id?: string; interval?: number };
+        if (deferredMaybe.status === 'deferred' && deferredMaybe.transaction_id) {
+          const deferredUrl = `${holderUrl}/v1/issuance/deferred${holderQuery}`;
+          const interval = Math.min(Math.max(deferredMaybe.interval ?? 2, 1), 5) * 1000;
+          for (let attempt = 0; attempt < 20; attempt++) {
+            await new Promise((r) => setTimeout(r, interval));
+            const pollResp = await fetch(deferredUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ transaction_id: deferredMaybe.transaction_id }),
+            });
+            if (!pollResp.ok) {
+              throw new Error(`deferred poll: HTTP ${pollResp.status} ${(await pollResp.text()).slice(0, 140)}`);
+            }
+            const polled = (await pollResp.json()) as { status?: string };
+            logStep(`  wallet intake: deferred poll #${attempt + 1} - ${polled.status ?? 'issued'}`);
+            if (polled.status === 'issued') {
+              break;
+            }
+          }
+        }
       } catch (e) {
         logStep(`  wallet intake failed: ${(e as Error).message.slice(0, 200)}`);
       }
