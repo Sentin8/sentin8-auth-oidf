@@ -274,7 +274,10 @@ test.afterAll(async () => {
 });
 
 test('OID4VCI Wallet - run every module-variant to terminal', async ({ browser }) => {
-  test.setTimeout(1_800_000);
+  // 3 HAIP cells x (1 identity registration + up to 23 module-variants each)
+  // + the plain plan: a 30-min cap interrupts the tail cells mid-run (the
+  // fapi2 battery never starts). The three-cell campaign needs 60 min.
+  test.setTimeout(3_600_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);
   const failures: string[] = [];
