@@ -670,8 +670,13 @@ async function runModuleOnPage(
         }
         // The code + state from the callback redirect's query (never
         // fetched - see above).
-        const code = new URL(redirectTarget, 'https://placeholder.invalid').searchParams.get('code') ?? '';
-        const stateParam = new URL(redirectTarget, 'https://placeholder.invalid').searchParams.get('state') ?? '';
+        const callbackUrl = new URL(redirectTarget, 'https://placeholder.invalid');
+        const code = callbackUrl.searchParams.get('code') ?? '';
+        const stateParam = callbackUrl.searchParams.get('state') ?? '';
+        // RFC 9207 §3.1: the callback's iss (when present) rides to the
+        // holder's complete - the holder validates it against the AS
+        // identifier and refuses the flow on a mismatch.
+        const issParam = callbackUrl.searchParams.get('iss') ?? undefined;
         if (!code) {
           throw new Error(`the authorize round produced no code (final ${redirectTarget.slice(0, 100)})`);
         }
@@ -680,7 +685,7 @@ async function runModuleOnPage(
         const compResp = await fetch(completeUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session: prep.session, code, state: stateParam }),
+          body: JSON.stringify({ session: prep.session, code, state: stateParam, iss: issParam }),
         });
         if (!compResp.ok) {
           throw new Error(`complete: HTTP ${compResp.status} ${(await compResp.text()).slice(0, 140)}`);
