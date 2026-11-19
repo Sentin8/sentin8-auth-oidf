@@ -251,6 +251,13 @@ test.beforeAll(async () => {
       trust_anchor: process.env.WALCERT_ATTESTATION_ANCHOR_PEM ?? '',
       issuer: process.env.WALCERT_ATTESTATION_ISSUER ?? '',
     };
+    // The mock issuer's offer endpoint (the suite alias root) - the
+    // issuer_initiated cells build their offer redirect from it (the
+    // URI must not be null there); the wallet-intake hook does not use
+    // it, but the module does.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (config.vci as Record<string, unknown>).credential_offer_endpoint =
+      `${certAuthHost()}/oauth/credential-offer?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(suiteCallback())}`;
     logStep(`WALCERT campaign: wallet SUT = ${holderUrl} (client ${clientId})`);
   } else {
     // The issuer-initiated offer URL: the offer LANDING page rides the ISSUER
