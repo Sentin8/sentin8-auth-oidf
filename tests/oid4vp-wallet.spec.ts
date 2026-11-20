@@ -32,7 +32,7 @@
 import { test, expect } from '@playwright/test';
 import { SuiteApi, type SuiteTestConfig } from '../fixtures/suite.js';
 import { runModule, planResults } from '../fixtures/runner.js';
-import { CONFORMANCE_ALIAS, resultsDir, seedOutPath, certAuthHost, suiteCallback } from '../fixtures/env.js';
+import { CONFORMANCE_ALIAS, resultsDir, seedOutPath, certAuthHost, suiteCallback, SUITE_BASE } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -130,7 +130,7 @@ function intakeClientBlock(): Record<string, unknown> | undefined {
   // the vci-wallet alias's callback); the mock AS 400s a mismatch
   // ("redirect_uri does not match the registered redirect_uri").
   const holderRedirect = process.env.WALCERT_HOLDER_REDIRECT_URI
-    ?? 'https://localhost.emobix.co.uk:8443/test/a/sentin8-wallet/callback';
+    ?? `${SUITE_BASE}/test/a/sentin8-wallet/callback`;
   return {
     client_id: clientId,
     token_endpoint_auth_method: 'private_key_jwt',
@@ -246,7 +246,7 @@ async function cellConfig(phase: 'pid' | 'mdoc'): Promise<SuiteTestConfig> {
     // prime the env so phaseAnchorPem picks it up when the seed-out
     // copies are missing (per-env cert-vpw layout).
     try {
-      const res = await fetch('https://localhost.emobix.co.uk:8443/mdoc-iaca-root.pem', {
+      const res = await fetch(`${SUITE_BASE}/mdoc-iaca-root.pem`, {
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) {

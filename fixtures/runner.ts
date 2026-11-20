@@ -28,7 +28,7 @@
 import type { Page, Browser } from '@playwright/test';
 import { chromium as _chromium } from '@playwright/test';
 import { SuiteApi, ACCEPTABLE, TERMINAL, type SuiteTestConfig, type BrowserAutomationEntry } from './suite.js';
-import { certAuthHost, CONFORMANCE_ALIAS, seedOutPath } from './env.js';
+import { certAuthHost, CONFORMANCE_ALIAS, seedOutPath, SUITE_BASE } from './env.js';
 import { logStep } from './log.js';
 import { readFileSync, existsSync } from 'node:fs';
 
@@ -690,7 +690,7 @@ async function runModuleOnPage(
         // The suite's own exposed offer endpoint: base_url = the alias
         // test-instance root, the suite appends /credential_offer.
         const suiteOfferUrl =
-          `https://localhost.emobix.co.uk:8443/test/a/${alias}/credential_offer`;
+          `${SUITE_BASE}/test/a/${alias}/credential_offer`;
         // The offer DOCUMENT endpoint (auth DESIGN 9a.20): mints the
         // offer JSON (issuer + configuration id + fresh issuer_state)
         // as a fetchable resource; the harness-bound pass-through
@@ -768,7 +768,7 @@ async function runModuleOnPage(
         // The issuer lands in the suite's metadata: the alias-root form
         // '.../test/a/<alias>/' is the mock issuer's identity.
         const alias = String((config as { alias?: string }).alias ?? '');
-        return alias ? `https://localhost.emobix.co.uk:8443/test/a/${alias}/` : '';
+        return alias ? `${SUITE_BASE}/test/a/${alias}/` : '';
       })();
     const configuredHint = exposedBlock.credential_configuration_id_hint
       ?? cfgVci.credential_configuration_id_hint
@@ -955,7 +955,7 @@ async function runModuleOnPage(
     // The suite origin (SetWebOrigin: the base_url's scheme+authority)
     // - the DC-API cells' expected_origins carry it and the B.2.6.2
     // transcript derives from it.
-    const vpOrigin = 'https://localhost.emobix.co.uk:8443';
+    const vpOrigin = SUITE_BASE;
     // Family 1: the direct_post request_uri candidates.
     const vpCandidateUrls: string[] = [
       ...((vpBrowserBlock.urls ?? []) as string[]),

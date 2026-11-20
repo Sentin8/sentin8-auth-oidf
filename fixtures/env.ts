@@ -196,7 +196,10 @@ export function certUser(envSlug: string = CERT_ENV_SLUG): { email: string; pass
     // pre-file contract (a 401 at sign-in, loudly).
     if (envSlug === 'cert') {
       return {
-        email: 'cert-user@conformance-local.local.sentin8.dev',
+        // The domain rides the rig mode (auth DESIGN 9a.2 item 2c) -
+        // derived, never hardcoded (the seeded file's email embeds the
+        // SENTIN8_DOMAIN the fleet booted under).
+        email: `cert-user@conformance-local.${platformDomain()}`,
         password,
       };
     }

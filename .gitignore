@@ -7,3 +7,12 @@ test-results/
 conformance/root-ca.crt
 conformance/suite-localhost-emobix.crt
 conformance/suite-localhost-emobix.key
+
+# RIGMODE-1 generated rig state: the domain mode file (make conformance-domain-*)
+# + the regenerated family extra_hosts (conformance-up) - never commit.
+conformance/domain.env
+conformance/extra_hosts.env
+
+# The skip-evaluation INFO inventory (working analysis; regenerated from
+# results/logs as needed - not campaign collateral).
+missing-claims.md
