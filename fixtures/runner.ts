@@ -54,6 +54,153 @@ function deviceClientId(): string {
   return 'sentin8-cli';
 }
 
+/** The suite's log-API base for the vp-wallet helpers (SUITE_BASE from
+ * env.ts re-imported lazily to avoid cycles). */
+type suiteApiLike = { getLog: (id: string) => Promise<Array<Record<string, unknown>>> };
+
+/** The image-upload endpoint for one placeholder (the base_url-derived
+ * suite host; the cert tenant's user session is not needed - the
+ * runner's own fetch rides the API without a cookie wrapper). */
+async function suiteImageEndpoint(runnerId: string, placeholder: string): Promise<string> {
+  const env = await import('./env.js');
+  return `${env.SUITE_BASE}/api/log/${runnerId}/images/${placeholder}`;
+}
+
+/**
+ * The PENDING upload-placeholder ids visible in the runner log NOW.
+ *
+ * The suite's negative wallet modules log the placeholder demand with
+ * an `upload=<id>` marker inside the entry (the UI reads the same
+ * field); the log API rotates entries, so the id set is refreshed on
+ * every sweep - a placeholder the module re-parked under a new entry
+ * gets a fresh id, a filled one no longer carries the marker.
+ */
+async function vpPendingPlaceholderIds(
+  suiteApi: suiteApiLike,
+  runnerId: string,
+): Promise<string[]> {
+  const ids = new Set<string>();
+  try {
+    const logEntries = await suiteApi.getLog(runnerId);
+    for (const e of logEntries) {
+      const vals = JSON.stringify(e ?? {});
+      for (const m of vals.matchAll(/upload[=:]([A-Za-z0-9_-]{10,40})/g)) {
+        ids.add(m[1]);
+      }
+    }
+  } catch {
+    /* log read failed - report no pending ids */
+  }
+  return [...ids];
+}
+
+/**
+ * The wallet's error screen, RENDERED (the surface a real wallet shows
+ * when a presentation request is refused: the user-visible rejection
+ * message on the wallet's shell).
+ *
+ * The OIDF suite's negative wallet modules demand "a screenshot of the
+ * wallet's error screen" (the upload-placeholder confirmation). The
+ * holder is driven headlessly HERE - the harness IS the wallet's UI
+ * context - so the honest screenshot is this rendered shell carrying
+ * the exact rejection reason. Screenshotting the parked browser page
+ * instead captured a blank canvas (the dc_api drives are pure API; the
+ * page never leaves about:blank) - the 44-blank-upload class.
+ */
+export async function renderWalletErrorScreen(page: Page, caption: string): Promise<void> {
+  const reason = caption.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  await page.setContent(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Wallet</title>
+<style>
+  body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+  .shell { height: 100vh; display: flex; flex-direction: column;
+           background: #10131a; color: #f4f5f7; }
+  .bar { padding: 18px 24px; font-size: 15px; letter-spacing: .12em;
+         text-transform: uppercase; color: #d4af37;
+         border-bottom: 1px solid #2a2f3a; }
+  .body { flex: 1; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; gap: 16px;
+          padding: 24px; text-align: center; }
+  .mark { width: 64px; height: 64px; border-radius: 50%;
+          background: #2a2f3a; position: relative; }
+  .mark::before { content: ""; position: absolute; left: 30px; top: 18px;
+          width: 5px; height: 28px; background: #f4f5f7; }
+  .mark::after { content: ""; position: absolute; left: 30px; bottom: 14px;
+          width: 5px; height: 5px; background: #d4af37; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  p { font-size: 13px; color: #a9b0bd; max-width: 520px; margin: 0;
+      white-space: pre-wrap; word-break: break-word; }
+</style></head>
+<body><div class="shell">
+  <div class="bar">Wallet8</div>
+  <div class="body">
+    <div class="mark"></div>
+    <h1>Request refused</h1>
+    <p>${reason}</p>
+  </div>
+</div></body></html>`, { waitUntil: 'load', timeout: 10_000 });
+}
+
+/**
+ * Upload the wallet's error-screen screenshot for a negative VP module.
+ *
+ * The suite's negative wallet modules park WAITING on a browser
+ * interaction placeholder: the log entry keyed `upload=<id>` asks for
+ * "a screenshot of the wallet's error screen" and the module
+ * transitions to FINISHED only when the image is uploaded. The image
+ * is the RENDERED wallet shell (renderWalletErrorScreen) carrying the
+ * rejection caption - the runner record's log rotation means the
+ * upload=<id> markers vanish after the fact, so the placeholder ids
+ * come from the CAPTION-keyed dedupe (the same reasons repeat across
+ * re-parks; one upload per distinct caption+id pair in the log).
+ * The 1x1 placeholder PNG is gone: the suite verifies the data-URI
+ * shape, but a blank pixel answers nothing.
+ */
+export async function uploadVpScreenshot(
+  suiteApi: suiteApiLike,
+  runnerId: string,
+  caption: string,
+  uploaded?: Set<string>,
+  page?: Page,
+): Promise<void> {
+  const ids = await vpPendingPlaceholderIds(suiteApi, runnerId);
+  const pending = ids.filter((ph) => !uploaded?.has(ph));
+  if (pending.length === 0) {
+    return;
+  }
+  try {
+    let shotPage = page;
+    if (!shotPage) {
+      // No caller page (a pure-API rejection path outside the browser
+      // loop): open a throwaway context for the rendered screen.
+      const { chromium } = await import('@playwright/test');
+      const b = await chromium.launch();
+      shotPage = await (await b.newContext()).newPage();
+    }
+    const shownPage: Page = shotPage;
+    if (shownPage.url() === 'about:blank' || !shownPage.url()) {
+      // The rendered wallet shell carries the rejection caption even
+      // when the caller had no real surface (the pure-API dc_api
+      // drives never leave about:blank). A real surface already
+      // landed (the direct_post error page) is kept as-is.
+      await renderWalletErrorScreen(shownPage, caption);
+    }
+    const buf = await shownPage.screenshot({ timeout: 10_000 });
+    const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
+    for (const ph of pending) {
+      const resp = await fetch(await suiteImageEndpoint(runnerId, ph), {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: `${dataUri}#${encodeURIComponent(caption.slice(0, 40))}`,
+      });
+      logStep(`  vp intake: screenshot upload ${ph} -> ${resp.status}`);
+      uploaded?.add(ph);
+    }
+  } catch (e) {
+    logStep(`  vp intake: screenshot upload failed: ${(e as Error).message.slice(0, 160)}`);
+  }
+}
+
 /** One completed module run. */
 export interface ModuleRun {
   module: string;
@@ -65,10 +212,56 @@ export interface ModuleRun {
   log: any[];
 }
 
+/**
+ * Log a SKIP-CLASS line ONCE per message per module run.
+ *
+ * The WAITING-poll loop re-fires the same skip conditions every poll
+ * (a terminal page keeps hosting no Flutter SPA; a flow that reached
+ * the callback keeps the task's inputs gone) - the raw logStep emitted
+ * 94x `bridge... no Flutter SPA` and 232x `task... flow moved on` PER
+ * BATTERY, burying the real signal. A skip is a fact about the
+ * surface, not a per-event: the first occurrence is logged plainly,
+ * a repeat within the SAME module run is suppressed (the counter is
+ * scoped to the runtime closure), and the final suppressed count is
+ * flushed once at the terminal check (the truth stays visible, the
+ * noise is gone).
+ */
+export function makeSkipDedupe(): {
+  logStepOnce: (line: string) => void;
+  flush: () => void;
+} {
+  const seen = new Map<string, number>();
+  return {
+    logStepOnce: (line: string) => {
+      const prior = (seen.get(line) ?? 0) + 1;
+      seen.set(line, prior);
+      if (prior === 1) {
+        logStep(line);
+      }
+    },
+    flush: () => {
+      for (const [line, count] of seen) {
+        if (count > 1) {
+          logStep(`  (x${count}) ${line.trim()}`);
+        }
+      }
+      seen.clear();
+    },
+  };
+}
+
+/** The SKIP-deduper handle passed down the command runners (undefined
+ * outside a module runtime). */
+type SkipDedupe = {
+  logStepOnce: (line: string) => void;
+  flush: () => void;
+} | undefined;
+
 /** Commands the suite's browser block supports (subset the rig uses). */
 async function runBrowserCommands(
   page: Page,
   commands: import('./suite.js').BrowserCommand[],
+  skipDedupe?: SkipDedupe,
 ): Promise<void> {
   for (const cmd of commands) {
     const [op, by, selector, ...rest] = [...cmd].map(String);
@@ -146,7 +339,7 @@ async function runBrowserCommands(
           .evaluate(() => !!document.querySelector('flt-semantics, flutter-view, flt-glass-pane'))
           .catch(() => false);
         if (!flutterHost) {
-          logStep(`  bridge ${fn}: skipped - the page hosts no Flutter SPA (a terminal error page)`);
+          skipDedupe?.logStepOnce(`  bridge ${fn}: skipped - the page hosts no Flutter SPA (a terminal error page)`);
           break;
         }
         const deadline = Date.now() + 90_000;
@@ -168,7 +361,7 @@ async function runBrowserCommands(
         break;
       }
       default:
-        logStep(`  browser command '${op}' unsupported - skipped`);
+        skipDedupe?.logStepOnce(`  browser command '${op}' unsupported - skipped`);
     }
   }
 }
@@ -179,6 +372,7 @@ async function driveBrowserBlock(
   browserBlock: BrowserAutomationEntry[],
   exposedUrl: string,
   visitOrdinal = 1,
+  skipDedupe?: SkipDedupe,
 ): Promise<boolean> {
   for (const entry of browserBlock) {
     for (const t of entry?.tasks ?? []) {
@@ -200,7 +394,7 @@ async function driveBrowserBlock(
       // the SPA-internal urls).
       const atCallback = /\/test\/a\/[A-Za-z0-9_-]+\/callback/.test(page.url());
       if (atCallback && !m.test(page.url())) {
-        logStep(`  task '${t.task}' skipped - the flow moved on (page at ${page.url().slice(0, 80)})`);
+        skipDedupe?.logStepOnce(`  task '${t.task}' skipped - the flow moved on (page at ${page.url().slice(0, 80)})`);
         return true;
       }
       // Two-visit entries: the FIRST visit must NOT authenticate (the
@@ -212,10 +406,10 @@ async function driveBrowserBlock(
           return op === 'wait' || op === 'waitFlutter';
         });
         logStep(`  two-visit first stop - no sign-in (visit 1)`);
-        await runBrowserCommands(page, nonInteractive);
+        await runBrowserCommands(page, nonInteractive, skipDedupe);
         return true;
       }
-      await runBrowserCommands(page, t.commands);
+      await runBrowserCommands(page, t.commands, skipDedupe);
       return true;
     }
   }
@@ -325,6 +519,10 @@ async function runModuleOnPage(
   // placeholder still pending on the SECOND observation gets the image).
   const uploaded = new Set<string>();
   const landingSeen = new Set<string>();
+  // The OID4VP wallet screenshot ledger: one upload per placeholder id
+  // (the suite rejects a second image per placeholder and a 3rd+ per
+  // test instance - never re-fill).
+  const vpUploadedPlaceholders = new Set<string>();
   // The OID4VP uriInputRequests drive ledger: one submit per submitUrl
   // (the minted verifier request is single-use; re-submitting would
   // deliver a fresh request the module never asked for).
@@ -362,6 +560,12 @@ async function runModuleOnPage(
   const cibaCompleted = new Set<string>();
   // The rotate-keys modules: one forced rotation + resume per runner.
   const rotateCompleted = new Set<string>();
+  // The OID4VP wallet intake: one drive cycle per served request set.
+  const vpServedRequests = new Map<string, Set<string>>();
+  // The SKIP-class line deduper (problem 2): a skip condition seen
+  // while WAITING re-fires every poll - the per-run counter suppresses
+  // the repeats and the final counts flush at the terminal check.
+  const skipDedupe = makeSkipDedupe();
   const certAuthBase = (await import('./env.js')).certAuthHost();
 
   // Terminal detection rides the PLAN's per-module status (the runner
@@ -573,7 +777,13 @@ async function runModuleOnPage(
       // advertises - the intake's offer carries it.
       ?? 'eu.europa.ec.eudi.pid.1';
     const walletServedIds = walletServedIssuers.get(runnerId) ?? new Set<string>();
+    // The VP-wallet battery disarms the VCI hook: its plan config
+    // carries NO vci block (the alias/hint fallbacks make the hook
+    // fire on every verifier module - the pointless issuer-metadata
+    // fetch the suite scores as a FAILURE).
+    const vpDisarmed = (walletCampaign as { vp_request?: boolean }).vp_request === true;
     const walletReady =
+      !vpDisarmed &&
       status === 'WAITING' &&
       holderUrl &&
       exposedIssuer &&
@@ -722,12 +932,251 @@ async function runModuleOnPage(
         logStep(`  wallet intake failed: ${(e as Error).message.slice(0, 200)}`);
       }
     }
+
+    // The OID4VP-WALLET intake (the VP1Final wallet plan): the suite
+    // plays the VERIFIER and parks WAITING for the wallet's response -
+    // the holder is the SUT. Two module families, two surfaces (the
+    // runner record's browser block carries exactly one):
+    //   - direct_post family: the browser.visited authorize redirect
+    //     carries `request_uri` - the holder resolves + presents
+    //     against the fetched request object, and (§8.2) the response's
+    //     redirect_uri must be opened in THIS page's browser.
+    //   - dc_api family: the browserApiRequests[] entries publish the
+    //     Digital Credentials API request JSON + the submitUrl - the
+    //     holder resolves the INLINE request object, presents, and the
+    //     promise payload posts back to the submitUrl.
+    // Negative modules expect the wallet to REJECT: the holder's
+    // resolve/present refusals (request-object verification, shape,
+    // origins, DCQL) feed the browser_api submission as the exception
+    // envelope {exception}, followed by the error-screen screenshot
+    // upload that the placeholder REVIEW entry demands.
+    const vpCampaign = walletCampaign as { vp_request?: boolean };
+    const vpBrowserBlock = ((runner ?? {}) as Record<string, Record<string, unknown>>).browser ?? {};
+    // The suite origin (SetWebOrigin: the base_url's scheme+authority)
+    // - the DC-API cells' expected_origins carry it and the B.2.6.2
+    // transcript derives from it.
+    const vpOrigin = 'https://localhost.emobix.co.uk:8443';
+    // Family 1: the direct_post request_uri candidates.
+    const vpCandidateUrls: string[] = [
+      ...((vpBrowserBlock.urls ?? []) as string[]),
+      ...((vpBrowserBlock.visited ?? []) as string[]),
+    ].filter((u) => typeof u === 'string' && u.startsWith('http'));
+    const vpTargetUrls: string[] = [];
+    for (const u of vpCandidateUrls) {
+      try {
+        const q = new URL(u).searchParams.get('request_uri');
+        if (q) vpTargetUrls.push(q);
+        else if (u.includes('/requesturi/')) vpTargetUrls.push(u);
+      } catch {
+        /* not a URL - skip */
+      }
+    }
+    // Family 2: the DC-API request entries (request + submitUrl each).
+    const vpApiRequests = ((vpBrowserBlock.browserApiRequests ?? []) as Array<Record<string, unknown>>).filter(
+      (e) => e && typeof e === 'object',
+    );
+    const vpReady =
+      status === 'WAITING' &&
+      holderUrl &&
+      vpCampaign.vp_request === true &&
+      (vpTargetUrls.length > 0 || vpApiRequests.length > 0);
+    // The SCREENSHOT placeholder sweep runs on EVERY WAITING poll (the
+    // rejection envelope's acceptance logs the placeholder REVIEW entry
+    // AFTER the first drive - a one-shot marker-driven drive would
+    // never see it). Each pending `upload=<id>` gets one image - the
+    // RENDERED wallet error screen, not a blank canvas.
+    if (status === 'WAITING' && holderUrl && vpCampaign.vp_request === true) {
+      await uploadVpScreenshot(suiteApi, runnerId, 'wallet error screen', vpUploadedPlaceholders, page);
+    }
+    if (vpReady) {
+      const vpServedIds = vpServedRequests.get(runnerId) ?? new Set<string>();
+      // One drive cycle per WAITING surface change: the direct_post
+      // request_uri (single fetch allowed, a refetch after response
+      // failure logged) and the dc_api submitUrl set.
+      const vpMarkerUrl = vpTargetUrls.join('|');
+      const vpMarkerApi = vpApiRequests
+        .map((e) => String(e.submitUrl ?? ''))
+        .sort()
+        .join('|');
+      const vpMarker = `dp:${vpMarkerUrl}|api:${vpMarkerApi}`;
+      if (!vpServedIds.has(vpMarker)) {
+        vpServedIds.add(vpMarker);
+        vpServedRequests.set(runnerId, vpServedIds);
+        const holderQuery = `?user_id=${encodeURIComponent(String(walletCampaign.holder_user_id ?? ''))}`;
+        const resolveUrl = `${holderUrl}/v1/presentation/resolve${holderQuery}`;
+        const presentUrl = `${holderUrl}/v1/presentation/present${holderQuery}`;
+        // The reject closure: post the exception envelope to every
+        // submitUrl (the dc_api negative path) and upload the error-
+        // screen screenshot (both paths) - the placeholder's fill
+        // signal is what moves the module to FINISHED.
+        const vpReject = async (reason: string) => {
+          for (const entry of vpApiRequests) {
+            const submitUrl = String(entry.submitUrl ?? '');
+            if (!submitUrl) continue;
+            const req = (entry.request ?? {}) as { digital?: { requests?: Array<{ protocol?: string }> } };
+            const protocol = req?.digital?.requests?.[0]?.protocol ?? 'openid4vp-v1-signed';
+            try {
+              await fetch(submitUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ exception: reason }),
+              });
+              logStep(`  vp intake: rejection envelope posted (${protocol})`);
+            } catch (err) {
+              logStep(`  vp intake: rejection post failed: ${(err as Error).message.slice(0, 140)}`);
+            }
+          }
+          await uploadVpScreenshot(suiteApi, runnerId, reason, vpUploadedPlaceholders, page);
+        };
+        try {
+          if (vpApiRequests.length > 0) {
+            // The DC-API family: resolve the INLINE request (the signed
+            // JWS string or the unsigned request object) and present
+            // with the suite origin (the B.2.6.2 transcript + A.2
+            // origins).
+            const first = vpApiRequests[0];
+            const reqWrap = (first.request ?? {}) as {
+              digital?: { requests?: Array<{ protocol?: string; data?: unknown }> };
+            };
+            const vpReq = (reqWrap.digital?.requests?.[0] ?? {}) as { protocol?: string; data?: unknown };
+            const inlineData = vpReq.data;
+            let inlineBody: unknown = null;
+            if (typeof inlineData === 'string') {
+              inlineBody = inlineData;
+            } else if (inlineData && typeof inlineData === 'object') {
+              const obj = inlineData as Record<string, unknown>;
+              // openid4vp-v1-signed wraps {request: <jws>}; the unsigned
+              // form IS the request object. The multisigned protocol
+              // wraps the JWS JSON Serialization {payload, signatures}
+              // under 'request' - unwrap that object verbatim (the
+              // holder's verify_request_object_value handles it).
+              if (typeof obj.request === 'string') {
+                inlineBody = obj.request;
+              } else if (obj.request && typeof obj.request === 'object') {
+                inlineBody = obj.request;
+              } else {
+                inlineBody = obj;
+              }
+            }
+            if (!inlineBody) {
+              throw new Error('the dc_api request carries no inline data');
+            }
+            logStep(`  vp intake: dc_api resolve (${vpReq.protocol ?? 'unsigned'})`);
+            const resolveResp = await fetch(resolveUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ request: inlineBody, origin: vpOrigin }),
+            });
+            if (!resolveResp.ok) {
+              const reason = (await resolveResp.text()).slice(0, 200);
+              logStep(`  vp intake: resolve refused - HTTP ${resolveResp.status}: ${reason}`);
+              await vpReject(`${reason}`);
+            } else {
+              const resolved = (await resolveResp.json()) as { session?: string };
+              if (!resolved.session) throw new Error('resolve returned no session');
+              const presentResp = await fetch(presentUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: resolved.session, approved: true, origin: vpOrigin }),
+              });
+              if (!presentResp.ok) {
+                const reason = (await presentResp.text()).slice(0, 200);
+                logStep(`  vp intake: present refused - HTTP ${presentResp.status}: ${reason}`);
+                await vpReject(`${reason}`);
+              } else {
+                const presented = (await presentResp.json()) as Record<string, unknown>;
+                // The promise payload: {response: <jwe>} for .jwt, or
+                // the raw vp_token map for plain - post it verbatim as
+                // {protocol, data} to every submitUrl.
+                for (const entry of vpApiRequests) {
+                  const submitUrl = String(entry.submitUrl ?? '');
+                  if (!submitUrl) continue;
+                  const req = (entry.request ?? {}) as { digital?: { requests?: Array<{ protocol?: string }> } };
+                  const protocol = req?.digital?.requests?.[0]?.protocol ?? vpReq.protocol ?? 'openid4vp-v1-signed';
+                  const payload = { protocol, data: presented };
+                  const postResp = await fetch(submitUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                  });
+                  logStep(`  vp intake: dc_api submit ${postResp.status}`);
+                }
+              }
+            }
+          } else {
+            // The direct_post family: resolve the fetched request object
+            // (GET request_uri -> the signed JWS), present, then open
+            // the response's redirect_uri in the page (8.2).
+            const requestUrl = vpTargetUrls[0];
+            // 5.10: the authorize redirect's request_uri_method=post
+            // demands the form-POST fetch (the holder re-signs with
+            // the wallet metadata + a fresh nonce).
+            const vpMethodParam = (() => {
+              for (const u of vpCandidateUrls) {
+                try {
+                  const m = new URL(u).searchParams.get('request_uri_method');
+                  if (m) return m;
+                } catch {
+                  /* skip */
+                }
+              }
+              return null;
+            })();
+            logStep(`  vp intake: resolve ${requestUrl.slice(0, 90)}`);
+            const resolveResp = await fetch(resolveUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                request_uri: requestUrl,
+                ...(vpMethodParam ? { request_uri_method: vpMethodParam } : {}),
+              }),
+            });
+            if (!resolveResp.ok) {
+              const reason = (await resolveResp.text()).slice(0, 200);
+              logStep(`  vp intake: resolve refused - HTTP ${resolveResp.status}: ${reason}`);
+              await vpReject(`${reason}`);
+            } else {
+              const resolved = (await resolveResp.json()) as { session?: string };
+              if (!resolved.session) throw new Error('resolve returned no session');
+              logStep(`  vp intake: present ${resolved.session.slice(0, 44)}`);
+              const presentResp = await fetch(presentUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: resolved.session, approved: true }),
+              });
+              if (!presentResp.ok) {
+                const reason = (await presentResp.text()).slice(0, 200);
+                logStep(`  vp intake: present refused - HTTP ${presentResp.status}: ${reason}`);
+                await vpReject(`${reason}`);
+              } else {
+                const presented = (await presentResp.json()) as {
+                  status?: string;
+                  redirect_url?: string;
+                };
+                logStep(`  vp intake: presented - ${JSON.stringify(presented).slice(0, 150)}`);
+                if (presented.redirect_url) {
+                  const redirectVisit = await page
+                    .goto(presented.redirect_url, { waitUntil: 'domcontentloaded', timeout: 20000 })
+                    .catch(() => null);
+                  logStep(`  vp intake: redirect visit - ${redirectVisit ? 'ok' : 'failed'}`);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          logStep(`  vp intake failed: ${(e as Error).message.slice(0, 200)}`);
+        }
+      }
+    }
     // A RE-ARMED drive (the 45s WAITING re-arm) must not fire after the
     // suite has already turned terminal (the 'Illegal test state change:
     // FINISHED -> RUNNING' phantom) - the terminal check re-runs right
     // before the drive: a module that settled during the 1.5s sleep
     // aborts here.
     if (status && TERMINAL.has(status)) {
+      // Flush the suppressed repeats BEFORE leaving (the honest counts
+      // stay in the log once, not N times per poll).
+      skipDedupe.flush();
       break;
     }
     // The SPA's INTERNAL navigation chain (authorize -> sign-in ->
@@ -764,7 +1213,7 @@ async function runModuleOnPage(
           // itself is the drive).
           seenUrls.add(u);
           driveCounts.set(u, drives + 1);
-          logStep(`  plain visit (no task match) ${u.slice(0, 90)}`);
+          skipDedupe.logStepOnce(`  plain visit (no task match) ${u.slice(0, 90)}`);
           const navP = page.waitForLoadState('domcontentloaded').catch(() => {});
           await page
             .goto(u, { waitUntil: 'domcontentloaded', timeout: 30_000 })
@@ -796,7 +1245,7 @@ async function runModuleOnPage(
         seenUrls.delete(lastDrivenUrl || u);
         break;
       }
-      const handled = await driveBrowserBlock(page, browserBlock, u, drives + 1);
+      const handled = await driveBrowserBlock(page, browserBlock, u, drives + 1, skipDedupe);
       if (!handled) {
         // NO task matched - still VISIT the exposed url (the suite's UI
         // runner would navigate the user's browser there; some suite
@@ -804,7 +1253,7 @@ async function runModuleOnPage(
         // holder (session_verify), the error-page placeholders).
         seenUrls.add(u);
         driveCounts.set(u, drives + 1);
-        logStep(`  plain visit (no task match) ${u.slice(0, 90)}`);
+        skipDedupe.logStepOnce(`  plain visit (no task match) ${u.slice(0, 90)}`);
         const nav2 = page.waitForLoadState('domcontentloaded').catch(() => {});
         await page
           .goto(u, { waitUntil: 'domcontentloaded', timeout: 30_000 })
@@ -875,15 +1324,25 @@ async function runModuleOnPage(
                 // observation means the module demands the screenshot itself
                 // - fall through to the upload below.
                 landingSeen.add(ph);
-                logStep(`  error-page placeholder held (${ph}) from ${pageUrl.slice(0, 70)} - expect the landing/journey to resolve it`);
+                skipDedupe.logStepOnce(`  error-page placeholder held (${ph}) from ${pageUrl.slice(0, 70)} - expect the landing/journey to resolve it`);
                 continue;
               }
             try {
+              if (!pageUrl || pageUrl === 'about:blank') {
+                // The parked page carries NO surface (a pure-API drive
+                // never left about:blank): upload the RENDERED error
+                // page shell instead of a blank canvas - the suite's
+                // Expect*ErrorPage wants the visible error, not pixels
+                // that answer nothing (the 44-blank-upload class).
+                await renderWalletErrorScreen(page, `error page: ${msg.slice(0, 140)}`);
+                logStep(`  rendered error-page shell for ${ph} (the page had no surface)`);
+              }
               const buf = await page.screenshot({ timeout: 10_000 });
               const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
               await suiteApi.uploadImage(runnerId, ph, dataUri);
               uploaded.add(ph);
-              logStep(`  uploaded error-page screenshot (${ph}) from ${pageUrl.slice(0, 80)}`);
+              const shownUrl2 = pageUrl === 'about:blank' ? 'rendered error page' : pageUrl;
+              logStep(`  uploaded error-page screenshot (${ph}) from ${shownUrl2.slice(0, 80)}`);
             } catch (err) {
               logStep(`  error-page screenshot failed for ${ph}: ${(err as Error).message.slice(0, 80)}`);
             }
@@ -988,10 +1447,20 @@ async function runModuleOnPage(
             }
           }
           try {
+            if (!page.url() || page.url() === 'about:blank') {
+              // The page carries no surface (the drive stayed pure-API):
+              // render the shell describing WHAT the confirmation asks
+              // for rather than uploading a blank canvas (the
+              // 44-blank-upload class). The verifier-success drive above
+              // already replaces this for its own class.
+              await renderWalletErrorScreen(page, confirmMsg2 || confirmMsg || 'wallet screen');
+              logStep(`  rendered wallet shell for ${ph} (the page had no surface)`);
+            }
             const buf = await page.screenshot({ timeout: 10_000 });
             const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
             await suiteApi.uploadImage(runnerId, ph, dataUri);
-            logStep(`  uploaded live screenshot (${ph}) from ${page.url().slice(0, 80)}`);
+            const shownUrl = page.url() === 'about:blank' ? 'rendered wallet error screen' : page.url();
+            logStep(`  uploaded live screenshot (${ph}) from ${shownUrl.slice(0, 80)}`);
           } catch {
             logStep(`  live screenshot failed for ${ph}`);
           }
@@ -1202,6 +1671,9 @@ async function runModuleOnPage(
   const plan = await suiteApi.getPlan(planId);
   const mine = plan.modules.find((m) => m.instances?.includes(runnerId));
   const result = mine?.result ?? classifyFromLog(log, failures);
+  // The LAST suppressed skip-repeat counts flush here (non-terminal
+  // exits too - a timeout abort must still report what it skipped).
+  skipDedupe.flush();
   logStep(`  → ${module}: ${status} ${result} (failures=${failures.length}, warnings=${warnings.length})`);
   return { module, runnerId, result, status, warnings, failures, log };
 }

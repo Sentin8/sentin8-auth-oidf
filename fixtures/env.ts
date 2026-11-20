@@ -36,7 +36,7 @@ const DOTENV_VARS = [
   'SENTIN8_TLS_CLIENT_AUTH',
 ] as const;
 
-function repoRoot(): string {
+export function repoRoot(): string {
   // Explicit operator override, then resolve from THIS module's location:
   // fixtures/ → sentin8-auth-oidf/ → sentin8/ (group repo) → tree root.
   if (process.env.SENTIN8_REPO_ROOT) return resolve(process.env.SENTIN8_REPO_ROOT);

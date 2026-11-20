@@ -15,6 +15,13 @@ auth DESIGN §9a.10/§9a.11 campaign rules:
   (a skip means discovery advertised a capability away).
 - **Warning-zero** - a WARNING in a module's log fails the run (every
   warning is a real gap with a root fix, not a note).
+- **Honest evidence** - every screenshot the harness uploads to an
+  OIDF upload-placeholder shows a real surface (a page with none gets
+  the rendered wallet/error shell, never a blank canvas), skip-class
+  log lines fire once per module (repeats flush as `(xN)` counts at
+  the terminal check), and a missing harness wire is a hard battery
+  violation, not an info (auth DESIGN §9a.2, the rig's honesty
+  contract; SKIPFIX-1).
 
 ## Certification tests
 
