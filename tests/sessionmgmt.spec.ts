@@ -37,6 +37,11 @@ function seedClientJwks(name: string): Record<string, unknown> | undefined {
   }
 }
 
+function seedClientJwksObj(name: string): Record<string, unknown> {
+  const j = seedClientJwks(name);
+  return j ? { jwks: j } : {};
+}
+
 
 let suiteApi: SuiteApi;
 let page: Page;
@@ -76,7 +81,7 @@ function loadSeededClients(): void {
       token_endpoint_auth_method: 'client_secret_basic',
       // CLAIMS-B (B2): the registered jwks (the structural RFC 7517
       // conditions arm on the client block's jwks member).
-      jwks: seedClientJwks('basic'),
+      ...seedClientJwksObj('basic'),
     };
   }
 }
