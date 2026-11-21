@@ -91,11 +91,56 @@ export function platformDomain(): string {
 }
 
 /**
- * The OIDF suite's base URL (suite nginx, :8443): the platform-CA leaf
- * for `localhost.emobix.co.uk` is minted by `make infra-tls` and mounted
- * by `make conformance-up` (auth DESIGN §9a.2).
+ * The suite target (DESIGN §9a.2d): `rig` (default - the local Docker
+ * stack) or `hosted` (https://www.certification.openid.net, the OIDF
+ * production instance - the submission target). Hosted swaps the API
+ * auth to the bearer strategy and needs no suite Docker stack.
  */
-export const SUITE_BASE = 'https://localhost.emobix.co.uk:8443';
+export const SUITE_TARGET = process.env.CONFORMANCE_SUITE_TARGET ?? 'rig';
+
+/** The hosted production suite base (the certification authority's
+ * instance; staging.certification.openid.net rides CONFORMANCE_SUITE_URL). */
+const HOSTED_SUITE_BASE = 'https://www.certification.openid.net';
+
+/**
+ * The OIDF suite's base URL: the rig value is the suite nginx at :8443
+ * (the platform-CA leaf for `localhost.emobix.co.uk`, minted by
+ * `make infra-tls` and mounted by `make conformance-up`, auth DESIGN
+ * §9a.2); the hosted value is the OIDF production instance. An explicit
+ * `CONFORMANCE_SUITE_URL` overrides both (staging, a mirror, a rig on a
+ * moved port).
+ */
+export const SUITE_BASE:
+  string = process.env.CONFORMANCE_SUITE_URL ??
+    (SUITE_TARGET === 'hosted' ? HOSTED_SUITE_BASE : 'https://localhost.emobix.co.uk:8443');
+
+/**
+ * True when the campaign runs the HOSTED suite (the submission
+ * instance): specs surface this in their logs, and the runners treat a
+ * suite 401 as a loud fail (re-run the token bootstrap), never a
+ * silent re-login (DESIGN §9a.2d item 5).
+ */
+export const HOSTED_TARGET = SUITE_TARGET === 'hosted';
+
+/**
+ * The suite API bearer token (hosted target, DESIGN §9a.2d item 2):
+ * resolves from the operator's export FIRST, then the bootstrap-written
+ * `suite-token.env` (the one-time Google/GitLab sign-in + Tokens-page
+ * mint). Undefined = the rig's devmode JSESSIONID strategy (today's
+ * local behavior bit-for-bit).
+ */
+export function suiteApiToken(): string | undefined {
+  const exported = process.env.CONFORMANCE_SUITE_TOKEN;
+  if (exported?.trim()) return exported.trim();
+  try {
+    const raw = readFileSync(join(repoRoot(), '.tmp', 'conformance', 'suite-token.env'), 'utf-8');
+    const m = raw.match(/^CONFORMANCE_SUITE_TOKEN=(\S+)$/m);
+    const fromFile = m?.[1]?.trim();
+    return fromFile || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * The certification tenant's auth host (DERIVED - no hardcoded domain):

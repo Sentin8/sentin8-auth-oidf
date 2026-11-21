@@ -141,6 +141,23 @@ campaign summary rides the Playwright JSON reporter
 (`results/oidf-results.json`). Import these into
 `.tmp/conformance/results/` per the auth runbook (§9a.5 step 6).
 
+## Suite targets (rig vs hosted, DESIGN 9a.2d)
+
+| Var | Meaning |
+|---|---|
+| `CONFORMANCE_SUITE_TARGET` | `rig` (default - the local Docker stack at localhost.emobix:8443) or `hosted` (https://www.certification.openid.net) |
+| `CONFORMANCE_SUITE_URL` | An explicit suite base (e.g. `https://staging.certification.openid.net`); wins over the target switch |
+| `CONFORMANCE_SUITE_TOKEN` | The hosted suite's API bearer token (export wins over `.tmp/conformance/suite-token.env`); absent = the rig's devmode JSESSIONID strategy |
+| `CONFORMANCE_SUITE_TOKEN_PERMANENT` | `true` mints a permanent token in the bootstrap (default: temporary, 24h TTL) |
+
+The hosted bootstrap (the ONE interactive step - sign in in the opening
+browser window):
+
+```bash
+make -C .. conformance-hosted-bootstrap     # group Makefile wrapper
+# or: pnpm exec playwright test tests/suite-token-bootstrap.spec.ts
+```
+
 ## The Category-B skip closures (CLAIMS-B)
 
 Source: `missing-claims.md` - the rig-side harness/registration

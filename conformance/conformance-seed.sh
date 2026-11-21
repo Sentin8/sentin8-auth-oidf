@@ -82,7 +82,19 @@ if [ "$ENV_SLUG_ALPHA_OK" != "1" ] || [ "$ALIAS_URL_OK" != "1" ]; then
   echo "[conformance-seed] invalid CONFORMANCE_ENV_SLUG ('$ENV_SLUG') or CONFORMANCE_ALIAS ('$ALIAS') - both must match ^[a-z0-9][a-z0-9-]*$" >&2
   exit 1
 fi
-CALLBACK="https://localhost.emobix.co.uk:8443/test/a/${ALIAS}/callback"
+# The suite base (DESIGN 9a.2d): hosted runs the callback against the
+# OIDF production instance (the OP under test must then be publicly
+# reachable); the rig keeps localhost.emobix (the docker nginx alias).
+SUIT_BASE="${CONFORMANCE_SUITE_URL:-}"
+if [ -z "$SUIT_BASE" ] && [ "${CONFORMANCE_SUITE_TARGET:-rig}" = "hosted" ]; then
+  SUIT_BASE="https://www.certification.openid.net"
+fi
+if [ -n "$SUIT_BASE" ]; then
+  SUIT_BASE="${SUIT_BASE%/}"
+  CALLBACK="${SUIT_BASE}/test/a/${ALIAS}/callback"
+else
+  CALLBACK="https://localhost.emobix.co.uk:8443/test/a/${ALIAS}/callback"
+fi
 USER_EMAIL="${CONFORMANCE_USER_EMAIL:-cert-user@${ENV_SLUG}.${ORG_SLUG}.${DOMAIN_SUFFIX}}"
 USER_PASSWORD="${CONFORMANCE_USER_PASSWORD:-Certification!2026}"
 CERT_AUTH_HOST="https://auth.${ENV_SLUG}.${ORG_SLUG}.${DOMAIN_SUFFIX}"
@@ -828,7 +840,10 @@ if [ "$PROFILE" == "vp" ] && [ -n "${HAIP_ISSUER_XY_EXPORTED:-}" ]; then
   # credential's `iss` - the suite mints credentials there). The
   # spec's own registration refreshes this entry with the campaign's
   # fresh wallet key (the seed's entry is the idempotent bootstrap).
-  WALLET_TRUST="$(printf '%s' "{\"issuer\":\"https://localhost.emobix.co.uk:8443/test/a/$ALIAS\",\"jwks\":{\"keys\":[{\"kty\":\"EC\",\"crv\":\"P-256\",\"alg\":\"ES256\",\"x\":\"$(echo "$HAIP_ISSUER_XY_EXPORTED" | cut -d' ' -f2)\",\"y\":\"$(echo "$HAIP_ISSUER_XY_EXPORTED" | cut -d' ' -f3)\"}]}}" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
+  # Derived from CALLBACK (strip the /callback tail -> the alias root,
+  # the suite-target switch, DESIGN 9a.2d).
+  WALLET_ISSUER="${CALLBACK%/callback}"
+  WALLET_TRUST="$(printf '%s' "{\"issuer\":\"$WALLET_ISSUER\",\"jwks\":{\"keys\":[{\"kty\":\"EC\",\"crv\":\"P-256\",\"alg\":\"ES256\",\"x\":\"$(echo "$HAIP_ISSUER_XY_EXPORTED" | cut -d' ' -f2)\",\"y\":\"$(echo "$HAIP_ISSUER_XY_EXPORTED" | cut -d' ' -f3)\"}]}}" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))")"
   CONN_LIST="$(ccall auth GET /v1/admin/enterprise-connections --env "$ENV_ID" 2>/dev/null || echo '[]')"
   OLD_CONN_ID="$(echo "$CONN_LIST" | python3 -c "
 import json,sys
@@ -1682,4 +1697,5 @@ else
   log "holder not reachable - wallet campaign env SKIPPED (the battery's wallet spec degrades to the issuer-side form)"
 fi
 log "wrote $CERT_USER_ENV"
-log "next: open https://localhost.emobix.co.uk:8443/ and create the test plans (runbook §4)"
+log "callback: $CALLBACK"
+log "next: open the suite and create the test plans (runbook §4) - suite base: ${SUIT_BASE:-https://localhost.emobix.co.uk:8443}"

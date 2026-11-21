@@ -59,11 +59,16 @@ function deviceClientId(): string {
 type suiteApiLike = { getLog: (id: string) => Promise<Array<Record<string, unknown>>> };
 
 /** The image-upload endpoint for one placeholder (the base_url-derived
- * suite host; the cert tenant's user session is not needed - the
- * runner's own fetch rides the API without a cookie wrapper). */
-async function suiteImageEndpoint(runnerId: string, placeholder: string): Promise<string> {
+ * suite host; the upload rides the campaign's auth plane - the hosted
+ * target's /api/** resource server answers 401 without the bearer
+ * header, so every direct suite-API fetch carries it when resolved). */
+async function suiteImageEndpoint(runnerId: string, placeholder: string): Promise<{ url: string; headers: Record<string, string> }> {
   const env = await import('./env.js');
-  return `${env.SUITE_BASE}/api/log/${runnerId}/images/${placeholder}`;
+  const token = env.suiteApiToken();
+  return {
+    url: `${env.SUITE_BASE}/api/log/${runnerId}/images/${placeholder}`,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  };
 }
 
 /**
@@ -188,9 +193,10 @@ export async function uploadVpScreenshot(
     const buf = await shownPage.screenshot({ timeout: 10_000 });
     const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
     for (const ph of pending) {
-      const resp = await fetch(await suiteImageEndpoint(runnerId, ph), {
+      const ep = await suiteImageEndpoint(runnerId, ph);
+      const resp = await fetch(ep.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
+        headers: { 'Content-Type': 'text/plain', ...ep.headers },
         body: `${dataUri}#${encodeURIComponent(caption.slice(0, 40))}`,
       });
       logStep(`  vp intake: screenshot upload ${ph} -> ${resp.status}`);

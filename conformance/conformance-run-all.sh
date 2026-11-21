@@ -24,6 +24,28 @@ TMP="$(cd "$RIG/../.." && pwd)/.tmp/conformance"
 LOGDIR="$TMP/logs"
 mkdir -p "$LOGDIR"
 
+# Hosted-target gate (DESIGN 9a.2d): CONFORMANCE_SUITE_TARGET=hosted
+# runs the battery against https://www.certification.openid.net - the
+# campaign needs the bootstrap-minted bearer token (suite-token.env, the
+# bootstrap spec's output). No suite Docker stack runs; the platform
+# fleet + seed run exactly as in the rig (the OP under test must be
+# publicly reachable). A missing token fails LOUD here (the campaign
+# would 401 at plan create) with the bootstrap hint - never per-module.
+if [ "${CONFORMANCE_SUITE_TARGET:-rig}" = "hosted" ]; then
+  if ! grep -q '^CONFORMANCE_SUITE_TOKEN=' "$TMP/suite-token.env" 2>/dev/null \
+     && [ -z "${CONFORMANCE_SUITE_TOKEN:-}" ]; then
+    echo "[conformance-run-all] FATAL: hosted target without a suite API token." >&2
+    echo "  bootstrap once (interactive):" >&2
+    echo "    CONFORMANCE_SUITE_TARGET=hosted npx playwright test tests/suite-token-bootstrap.spec.ts" >&2
+    echo "  (the Google/GitLab sign-in happens in the browser window);" >&2
+    echo "  the token rides .tmp/conformance/suite-token.env" >&2
+    exit 1
+  fi
+  echo "[conformance-run-all] HOSTED target: ${CONFORMANCE_SUITE_URL:-https://www.certification.openid.net}"
+fi
+# The suite target rides EVERY spec process below (env.ts reads it).
+export CONFORMANCE_SUITE_TARGET="${CONFORMANCE_SUITE_TARGET:-rig}"
+
 # The battery order: simple to hard security (DESIGN 9a.2) - the plain
 # OIDC Core families first (basic/config/dynamic/logout, then the
 # response-type families implicit/hybrid/formpost, session management),

@@ -4,15 +4,23 @@
 
 // fixtures/suite.ts - the OIDF suite REST client (server-side API).
 //
-// The suite's API (5.3.x) needs the browser session (JSESSIONID) for
-// mutating calls in devmode; this client acquires + carries the cookie
-// transparently. Plan/runner/log reads are the campaign's data plane:
+// Two auth strategies on ONE client (DESIGN §9a.2d):
+//  - rig (default): the suite's devmode contract - a bare JSESSIONID
+//    cookie acquired from the suite root (the local Docker stack runs
+//    -Dfintechlabs.devmode=true, the dummy user authenticates it).
+//  - hosted (a resolved CONFORMANCE_SUITE_TOKEN): the production
+//    instance's /api/** chain is an OAuth2 resource server - every
+//    call rides `Authorization: Bearer <token>` (the opaque API token
+//    created via POST /api/token under the operator's signed-in
+//    session; see the bootstrap spec + DESIGN §9a.2d item 3).
+//
+// Plan/runner/log reads are the campaign's data plane:
 //   POST /api/runner?test=<module>&plan=<planId>  create + auto-start ONE module
 //   GET  /api/runner/<id>                         poll its state
 //   GET  /api/log/<id>                            fetch its event log
 //   GET  /api/plan/<id>                           plan + per-module results
 
-import { certDiscoveryUrl, suiteCallback, CONFORMANCE_ALIAS, CERT_USER, SUITE_BASE, certAuthHost } from './env.js';
+import { certDiscoveryUrl, suiteCallback, CONFORMANCE_ALIAS, CERT_USER, SUITE_BASE, certAuthHost, suiteApiToken, HOSTED_TARGET } from './env.js';
 import { logStep } from './log.js';
 
 /** Terminal test states (suite `result` values). */
@@ -287,14 +295,23 @@ export function twoVisitParReusedAutomation(): BrowserAutomationEntry[] {
 export class SuiteApi {
   private cookie: string | null = null;
 
+  /** The bearer token (hosted strategy) resolved at construction -
+   * undefined = the rig's devmode JSESSIONID strategy. */
+  private readonly token: string | undefined = suiteApiToken();
+
   private async ensureCookie(): Promise<void> {
-    if (this.cookie) return;
+    if (this.cookie || this.token) return;
     const res = await fetch(`${SUITE_BASE}/`, {
       redirect: 'manual',
     });
     const setCookie = res.headers.get('set-cookie') ?? '';
     const m = setCookie.match(/JSESSIONID=([^;]+)/);
     this.cookie = m ? `JSESSIONID=${m[1]}` : null;
+  }
+
+  /** The request's auth plane: bearer header (hosted) or cookie (rig). */
+  private authHeaders(): Record<string, string> {
+    return this.cookie ? { Cookie: this.cookie } : {};
   }
 
   /**
@@ -316,16 +333,27 @@ export class SuiteApi {
     throw new Error(`auth not healthy after ${maxMs}ms (${certAuthHost()}/v1/health)`);
   }
 
-  /** Raw fetch against the suite API with the session cookie. */
+  /** Raw fetch against the suite API with the bearer/cookie auth plane.
+   * A hosted-target 401 fails LOUD (the DESIGN §9a.2d item 5 rule: the
+   * token expired/minted for another account -> re-run the bootstrap,
+   * never a silent re-login). */
   async request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
     await this.ensureCookie();
     const res = await fetch(path.startsWith('http') ? path : `${SUITE_BASE}${path}`, {
       ...init,
       headers: {
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : this.authHeaders()),
         'Content-Type': 'application/json',
         ...(init.headers ?? {}),
       },
     });
+    if (res.status === 401 && this.token) {
+      throw new Error(
+        `suite 401 on ${path} (bearer target ${SUITE_BASE}) - the API token is ` +
+          'expired/revoked: re-run the hosted bootstrap ' +
+          '(CONFORMANCE_SUITE_TARGET=hosted npx playwright test tests/suite-token-bootstrap.spec.ts)',
+      );
+    }
     // The suite occasionally answers 204/empty on racey GETs (plan
     // re-read right after the last module settles) - treat an empty
     // body as unknown JSON rather than throwing "Unexpected end of
@@ -375,8 +403,8 @@ export class SuiteApi {
     const res = await fetch(`${SUITE_BASE}/api/plan?${qs.toString()}`, {
       method: 'POST',
       headers: {
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : this.authHeaders()),
         'Content-Type': 'application/json',
-        ...(this.cookie ? { Cookie: this.cookie } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -409,8 +437,8 @@ export class SuiteApi {
       {
         method: 'POST',
         headers: {
+          ...(this.token ? { Authorization: `Bearer ${this.token}` } : this.authHeaders()),
           'Content-Type': 'application/json',
-          ...(this.cookie ? { Cookie: this.cookie } : {}),
         },
       },
     );
@@ -429,10 +457,11 @@ export class SuiteApi {
     return this.request(`/api/runner/${runnerId}`);
   }
 
-  /** The session-cookie header for raw fetch callers (the harness's
-   * runner-resume action rides the same JSESSIONID devmode contract). */
+  /** The auth header for raw fetch callers (the harness's
+   * runner-resume action rides the same devmode (cookie) or hosted
+   * (bearer) contract). */
   cookieHeader(): Record<string, string> {
-    return this.cookie ? { Cookie: this.cookie } : {};
+    return this.token ? { Authorization: `Bearer ${this.token}` } : this.authHeaders();
   }
 
   /** Resume a WAITING runner (the suite's manual 'Start' button = the
@@ -468,9 +497,10 @@ export class SuiteApi {
    */
   async markVisited(runnerId: string, url: string): Promise<void> {
     const enc = encodeURIComponent(url);
+    await this.ensureCookie();
     await fetch(`${SUITE_BASE}/api/runner/browser/${runnerId}/visit?url=${enc}`, {
       method: 'POST',
-      headers: this.cookie ? { Cookie: this.cookie } : undefined,
+      headers: this.cookieHeader(),
     });
   }
 
@@ -481,11 +511,12 @@ export class SuiteApi {
    * image lands). Body = the image as a data URI (text/plain).
    */
   async uploadImage(runnerId: string, placeholder: string, dataUri: string): Promise<void> {
+    await this.ensureCookie();
     await fetch(`${SUITE_BASE}/api/log/${runnerId}/images/${placeholder}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/plain',
-        ...(this.cookie ? { Cookie: this.cookie } : {}),
+        ...this.cookieHeader(),
       },
       body: dataUri,
     });

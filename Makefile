@@ -24,7 +24,7 @@ SHELL := /bin/bash
 # writes its per-env files under {tree}/.tmp/conformance/.
 SENTIN8_REPO_ROOT ?= $(abspath ../..)
 
-.PHONY: help install test oidc-basic oidc-config oidc-dynamic fapi2 fapi1 ciba logout results clean
+.PHONY: help install test bootstrap-suite-token oidc-basic oidc-config oidc-dynamic fapi2 fapi1 ciba logout results clean
 
 help: ## Show this help
 	@echo "sentin8-auth-oidf (OIDF conformance automation)"
@@ -37,7 +37,8 @@ install: ## pnpm install + browsers
 test: ## Run every profile suite (serial)
 	@pnpm run test
 
-# ── Per-family env loading ────────────────────────────────────────────────
+bootstrap-suite-token: ## Hosted target: the ONE interactive step (sign-in in the browser + POST /api/token, DESIGN 9a.2d)
+	@pnpm exec playwright test tests/suite-token-bootstrap.spec.ts
 # The seed writes the per-env user identity + slug/alias into
 # cert-user{,-<slug>}.env (DESIGN §9a.2 item 2); the battery wrapper
 # (conformance-run-all.sh) exports it before each family - a DIRECT
