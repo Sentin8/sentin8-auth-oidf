@@ -47,7 +47,7 @@ DOMAIN="${DOMAIN:-local.sentin8.dev}"
 # ${DOCKER_HOST_IPV4:-host-gateway} form, so this file carries only the
 # HOSTNAME side of each mapping.
 ORG_SLUG="conformance-local"
-FAMILIES=(cert cert-fcl cert-imp cert-hyb cert-fp cert-sm cert-vp cert-f2m cert-fapi1 cert-ciba cert-vci cert-haip cert-wallet cert-vpw)
+FAMILIES=(cert cert-fcl cert-imp cert-hyb cert-fp cert-sm cert-vp cert-f2m cert-fapi1 cert-fapi2 cert-ciba cert-vci cert-haip cert-wallet cert-vpw)
 
 emit() {
   for slug in "${FAMILIES[@]}"; do
