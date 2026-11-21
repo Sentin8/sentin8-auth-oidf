@@ -277,6 +277,14 @@ async function runBrowserCommands(
         }
         break;
       }
+      case 'waitMs': {
+        // ['waitMs', 4000] - a plain dwell (the FCL interstitial's
+        // meta-refresh fires at 3s; the front-channel iframes fire
+        // before it). A bare timeout the selector vocabulary cannot
+        // express.
+        await page.waitForTimeout(Number(selector) || 0);
+        break;
+      }
       case 'text':
       case 'type': {
         const sel = by === 'id' ? `#${selector}` : selector;

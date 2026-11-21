@@ -75,6 +75,11 @@ function seededCibaClients(authType: 'private_key_jwt' | 'mtls' = 'private_key_j
       notification_endpoint: suiteCibaNotification(),
       hint_type: 'login_hint',
       hint_value: certUser().email,
+      // CIBA-7.1: the suite's FAPICIBAAddAcrValuesToAuthorizationEndpointRequest
+      // reads client.acr_value and validates it against the discovery
+      // document's acr_values_supported (the OP advertises
+      // urn:certification:idp:aal1 - auth DESIGN 9a.30/A2).
+      acr_value: 'urn:certification:idp:aal1',
       jwks: { keys: [keys] },
     });
     return {
@@ -109,6 +114,9 @@ function seededCibaClients(authType: 'private_key_jwt' | 'mtls' = 'private_key_j
     // authenticates the certification user by EMAIL.
     hint_type: 'login_hint',
     hint_value: certUser().email,
+    // CIBA-7.1: the suite's FAPICIBAAddAcrValues reads client.acr_value
+    // (validated against discovery's acr_values_supported).
+    acr_value: 'urn:certification:idp:aal1',
     jwks: { keys: [keys] },
   });
   // TWO DISTINCT clients: the suite's second-configuration family

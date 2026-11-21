@@ -147,12 +147,22 @@ export function standardBrowserAutomation(): BrowserAutomationEntry[] {
         {
           task: 'Logout Landing',
           // RP-initiated logout : the suite's front-channel
-          // url is /oauth/logout?id_token_hint=... - a plain GET the
-          // OP answers 302 to the registered post_logout_redirect_uri
-          // (the suite's landing page); the goto itself completes the
-          // hop - no interactive commands.
+          // url is /oauth/logout?id_token_hint=... - the OP answers
+          // either a 302 (no FCL clients registered - the landing
+          // hop completes in the goto) or the FCL INTERSTITIAL (an
+          // HTML page embedding one iframe per front-channel client
+          // + a meta-refresh to the registered post_logout_redirect
+          // after 3s - FCL 1.0 2.3: the iframes must LOAD IN THE
+          // USER'S BROWSER before the redirect). The wait rides the
+          // interstitial out so the suite's RP front-channel
+          // listener receives the iframe call; a no-FCL 302 lands
+          // post_logout in the goto and the wait is a harmless
+          // idle (the selector never appears).
           match: `${authHost}/oauth/logout*`,
-          commands: [],
+          commands: [
+            ['wait', 'css', 'iframe[src*="frontchannel"], iframe[src*="?iss="]', 6],
+            ['waitMs', 4_000],
+          ],
         },
         {
           task: 'Session Verify',
@@ -211,8 +221,13 @@ export function denyBrowserAutomation(): BrowserAutomationEntry[] {
         },
         {
           task: 'Logout Landing',
+          // The interstitial dwell (see the standard block's comment):
+          // the FCL iframes fire before the meta-refresh hop.
           match: `${authHost}/oauth/logout*`,
-          commands: [],
+          commands: [
+            ['wait', 'css', 'iframe[src*="frontchannel"], iframe[src*="?iss="]', 6],
+            ['waitMs', 4_000],
+          ],
         },
         {
           task: 'Session Verify',
