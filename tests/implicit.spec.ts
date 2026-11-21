@@ -23,6 +23,25 @@ import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+/** CLAIMS-B (B2): the registered client jwks from the seed-out (the
+ * structural RFC 7517 conditions arm on the plan config's client.jwks
+ * member; a client whose secret-registration carried no jwks keeps
+ * skipping). `name` is the emit_client name the seed used. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function seedClientJwks(name: string): Record<string, unknown> | undefined {
+  const seedOut = process.env.OIDF_SEED_OUT ?? seedOutPath();
+  if (!existsSync(seedOut)) return undefined;
+  const text = readFileSync(seedOut, 'utf8');
+  const line = text.match(new RegExp(`client_jwks\\(${name}\\)=(\\{.*\\})`))?.[1];
+  if (!line) return undefined;
+  try {
+    return JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+
 let suiteApi: SuiteApi;
 let page: Page;
 const planIds: string[] = [];
@@ -50,6 +69,9 @@ function loadSeededClients(): void {
       scope: 'openid profile email phone address',
       redirect_uri: suiteCallback(),
       token_endpoint_auth_method: 'client_secret_basic',
+      // CLAIMS-B (B2): the registered jwks (the structural RFC 7517
+      // conditions arm on the client block's jwks member).
+      jwks: seedClientJwks('basic'),
     };
   }
 }

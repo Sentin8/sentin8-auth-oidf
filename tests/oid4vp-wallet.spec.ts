@@ -61,6 +61,44 @@ function seedPem(path: string, key: string): string {
   return (text.match(new RegExp(`${key}=([\\s\\S]*?-----END CERTIFICATE-----)`))?.[1] ?? '').trim();
 }
 
+/** CLAIMS-B (sentin8-auth-oidf README, Category-B): the seed-out lines
+ * the wallet spec never consumed but the seed of this tree emits.
+ * - `verifier_info(verifier)` - B1: the verifier's human identity; the
+ *   suite's AddVerifierInfoToAuthorizationEndpointRequest reads it from
+ *   the plan config's client block (OID4VP-1FINAL-5.1).
+ * - `rical_b64(rical)` - B3: the seed-minted Reader Issuer CA List
+ *   (ISO/IEC 18013-5 F.3.2); the verifier spec consumed it, this one
+ *   never did - RegisterRical arms the mDL x5c-against-RICAL
+ *   conditions (790 skips). The RICAL REPLACES the single trust
+ *   anchor: when the RICAL consumes, the anchor PEM must stay OUT of
+ *   the client block (the suite rejects carrying both). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function seedClientExtras(): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const seedOut = seedOutPath();
+  if (!existsSync(seedOut)) return out;
+  const text = readFileSync(seedOut, 'utf8');
+  const vi = text.match(/^verifier_info\(verifier\)=(\{.*\})$/m)?.[1];
+  if (vi) {
+    try {
+      out.verifier_info = JSON.parse(vi);
+    } catch {
+      /* the line is malformed - skip the member (the suite skips its
+       * conditions; no worse than before the pass-through) */
+    }
+  }
+  const rical = text.match(/^rical_b64\(rical\)=([A-Za-z0-9+/=]+)$/m)?.[1];
+  if (rical) {
+    out.rical = rical;
+    // The RICAL replaces the single anchor - the anchor PEM must NOT
+    // ride the client block when the RICAL is present (the suite's
+    // both-forms rejection). This spec carries the anchor in the
+    // TOP-LEVEL/credential blocks only; nothing in the client block
+    // competes here.
+  }
+  return out;
+}
+
 /** The wallet's published identity: client.jwks = the P-256 key the
  * suite's own wallet-side steps sign with (ValidateClientJWKsPrivatePart
  * requires the PRIVATE form). */
@@ -275,7 +313,7 @@ async function cellConfig(phase: 'pid' | 'mdoc'): Promise<SuiteTestConfig> {
       status_list_trust_anchor_pem: anchor,
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    client: { ...(anyCfg.client ?? {}), jwks: walletJwks() },
+    client: { ...(anyCfg.client ?? {}), jwks: walletJwks(), ...seedClientExtras() },
     // The MULTISIGNED rows demand a second JWKS set (ExtractSecondJWKs
     // reads client2.jwks and the suite signs the second signature with
     // it; the wallet's x509_hash verification is x5c-hash-based so any

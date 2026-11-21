@@ -140,3 +140,24 @@ Every module's full log lands in `results/logs/<module>.json`; the
 campaign summary rides the Playwright JSON reporter
 (`results/oidf-results.json`). Import these into
 `.tmp/conformance/results/` per the auth runbook (§9a.5 step 6).
+
+## The Category-B skip closures (CLAIMS-B)
+
+Source: `missing-claims.md` - the rig-side harness/registration
+material the suite reads from the plan config's client block that the
+specs did not pass. The seed already mints most of it (the seed-out
+lines); the specs just never consume it.
+
+| # | Missing element | Items | What the spec does |
+|---|---|---|---|
+| B1 | `client verifier_info` | 544 | The oid4vp-wallet spec's client block passes `verifier_info` (the verifier's human identity the suite injects into the built authorization request - `AddVerifierInfoToAuthorizationEndpointRequest`, OID4VP-1FINAL-5.1). Sourced from the seed-out's `verifier_info(verifier)` line (the seed emits it; auth §9a.30.7's platform shape). |
+| B2 | `client jwks` | 450 | The oidc-dynamic spec DCRs its own clients (private_key_jwt per the plan bytecode) - the SUITE generates the keypair itself and the static-client blocks of the plain OIDC families carry no jwks by registration shape. The closure: the spec's `client_registration_static` block gains the seed-minted `jwks` where the plan admits a static registration, so the structural conditions (`RFC7517-1.1/4.5`) run instead of skipping. Where the plan hard-codes dynamic DCR, the skip is the plan's own shape and remains. |
+| B3 | `client rical` | 790 | The oid4vp-wallet spec's client block gains the seed-minted `rical_b64(rical)` line (the VERIFIER spec already consumes it; the WALLET spec never did) - `RegisterRical` arms `ValidateRequestObjectX5cChainAgainstRical` for the mDL cells. The single-anchor fallback (`request_object_trust_anchor_pem`) stays for campaigns without a RICAL. |
+| B4 | `vical` + `mdoc_revocation_*` | 572 | The mdoc issuer-chain/revocation pipeline needs the config to point at the suite-hosted VICAL/revocation endpoints - the plan config gains them only where the SUITE hosts them for the profile under test (an inventory of the mock-issuer's hosted surfaces per campaign; the seed emits `vical_url(vciatt)` when the family's alias hosts one). |
+| B5 | `incoming_request headers x-fapi-*` | 96 | The holder's FAPI-style request headers (auth-date / customer-ip / interaction-id / DPoP) on the calls to the SUITE's mock issuer. The rig's holder path (wallet8-holder intake) carries them where the plan's holder-side module family can validate them; the variant-conditional rows (B5 in the inventory) stay per the holder's posture. |
+
+The emitted seed-out lines ride the same `key=value` convention the
+specs already parse (`rical_b64(rical)=...`, `verifier_info(json)=...`,
+`vical_url(vciatt)=...`); adding a line is a seed change, consuming it
+a spec change - both land together so a spec never reads a line the
+seed of the same tree does not write.
