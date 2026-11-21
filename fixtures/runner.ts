@@ -58,6 +58,39 @@ function deviceClientId(): string {
  * env.ts re-imported lazily to avoid cycles). */
 type suiteApiLike = { getLog: (id: string) => Promise<Array<Record<string, unknown>>> };
 
+/** A plan reader minimal slice - the fresh terminality check below. */
+type planReaderLike = {
+  getPlan: (planId: string) => Promise<{
+    modules?: Array<{ instances?: string[]; status?: string | null }>;
+  }>;
+};
+
+/**
+ * The module's LIVE status re-read from the plan (fresh fetch, not
+ * the poll's cached copy): a placeholder fill can settle the module
+ * the moment the upload lands - the caller must stop driving a
+ * settled test (the suite's state machine rejects a RUNNING transition
+ * after FINISHED - the 'Illegal test state change' phantom).
+ *
+ * @param suiteApi The plan reader (the SuiteApi instance).
+ * @param planId The plan the module rides.
+ * @param runnerId The module instance.
+ * @returns The instance's status string or null (unknown).
+ */
+async function freshModuleStatus(
+  suiteApi: planReaderLike,
+  planId: string,
+  runnerId: string,
+): Promise<string | null> {
+  try {
+    const plan = await suiteApi.getPlan(planId);
+    const mine = (plan.modules ?? []).find((m) => m.instances?.includes(runnerId));
+    return mine?.status ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** The image-upload endpoint for one placeholder (the base_url-derived
  * suite host; the upload rides the campaign's auth plane - the hosted
  * target's /api/** resource server answers 401 without the bearer
@@ -89,7 +122,7 @@ async function vpPendingPlaceholderIds(
     const logEntries = await suiteApi.getLog(runnerId);
     for (const e of logEntries) {
       const vals = JSON.stringify(e ?? {});
-      for (const m of vals.matchAll(/upload[=:]([A-Za-z0-9_-]{10,40})/g)) {
+      for (const m of vals.matchAll(/upload[=":]+\s*([A-Za-z0-9_-]{10,40})/g)) {
         ids.add(m[1]);
       }
     }
@@ -172,8 +205,7 @@ export async function uploadVpScreenshot(
   const pending = ids.filter((ph) => !uploaded?.has(ph));
   if (pending.length === 0) {
     return;
-  }
-  try {
+  }  try {
     let shotPage = page;
     if (!shotPage) {
       // No caller page (a pure-API rejection path outside the browser
@@ -194,10 +226,14 @@ export async function uploadVpScreenshot(
     const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
     for (const ph of pending) {
       const ep = await suiteImageEndpoint(runnerId, ph);
+      // The BARE dataUri - the suite's ImageAPI decodes everything
+      // after 'base64,': a trailing '#caption' makes the decoder throw
+      // (an unhandled 500); the caption rides INSIDE the PNG (the
+      // rendered shell renders it).
       const resp = await fetch(ep.url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain', ...ep.headers },
-        body: `${dataUri}#${encodeURIComponent(caption.slice(0, 40))}`,
+        body: dataUri,
       });
       logStep(`  vp intake: screenshot upload ${ph} -> ${resp.status}`);
       uploaded?.add(ph);
@@ -535,8 +571,13 @@ async function runModuleOnPage(
   const landingSeen = new Set<string>();
   // The OID4VP wallet screenshot ledger: one upload per placeholder id
   // (the suite rejects a second image per placeholder and a 3rd+ per
-  // test instance - never re-fill).
-  const vpUploadedPlaceholders = new Set<string>();
+  // test instance - never re-fill). This ALIASES the generic `uploaded`
+  // set: both uploaders (the wallet rejection screens and the generic
+  // error-page sweep) must observe the same fills - separate Sets let
+  // the generic sweep race the intake and close the same placeholder
+  // with the wrong image (the wallet-rejection review carried the
+  // sign-in page instead of the holder's refusal screen).
+  const vpUploadedPlaceholders: Set<string> = uploaded;
   // The OID4VP uriInputRequests drive ledger: one submit per submitUrl
   // (the minted verifier request is single-use; re-submitting would
   // deliver a fresh request the module never asked for).
@@ -1001,6 +1042,18 @@ async function runModuleOnPage(
     // RENDERED wallet error screen, not a blank canvas.
     if (status === 'WAITING' && holderUrl && vpCampaign.vp_request === true) {
       await uploadVpScreenshot(suiteApi, runnerId, 'wallet error screen', vpUploadedPlaceholders, page);
+      // A fill can settle the module the moment the upload lands (the
+      // suite's placeholderFilled() resumes the wait): re-read the
+      // status FRESH and skip the drive on a settled test - the drive
+      // cycle below would resolve/POST into a FINISHED instance (the
+      // 'Illegal test state change: FINISHED -> RUNNING' phantom, the
+      // retry12 invalid-client-id-prefix failure).
+      const settled = await freshModuleStatus(suiteApi, planId, runnerId);
+      if (settled && TERMINAL.has(settled)) {
+        logStep(`  vp intake: placeholder fill settled the module (${settled}) - skip the drive`);
+        status = settled;
+        continue;
+      }
     }
     if (vpReady) {
       const vpServedIds = vpServedRequests.get(runnerId) ?? new Set<string>();
@@ -1307,6 +1360,25 @@ async function runModuleOnPage(
           // upload it (the browser has just driven the authorize URL).
           const msg = String(e?.msg ?? '');
           if (/error page/i.test(msg)) {
+            // (C) WALLET-REJECTION placeholders (the OID4VP wallet
+            // family): the module parking on this placeholder is the
+            // suite-as-verifier waiting for the WALLET's error screen -
+            // the holder refused (resolve/present refusal or Browser
+            // API promise rejection). The live page here is our
+            // sign-in surface or a shell; the intake's WAITING sweep
+            // (this poll, above) fills the placeholder with the
+            // holder's actual refusal screen. Never double-fill (the
+            // alias makes the shared ledger the single source).
+            const isWalletVpModule =
+              vpCampaign?.vp_request === true &&
+              status === 'WAITING' &&
+              holderUrl != null &&
+              (vpTargetUrls.length > 0 || vpApiRequests.length > 0);
+            if (isWalletVpModule) {
+              landingSeen.add(ph);
+              skipDedupe.logStepOnce(`  error-page placeholder held for the wallet rejection (${ph}) - the intake sweep fills it with the holder's refusal screen`);
+              continue;
+            }
             const pageUrl = page.url();
               // Our OWN login/consent surfaces are never the module's error
               // page: the JAR-precedence positives log a CONDITIONAL

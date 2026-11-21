@@ -63,22 +63,29 @@ function seedPem(path: string, key: string): string {
 
 /** CLAIMS-B (sentin8-auth-oidf README, Category-B): the seed-out lines
  * the wallet spec never consumed but the seed of this tree emits.
- * - `verifier_info(verifier)` - B1: the verifier's human identity; the
- *   suite's AddVerifierInfoToAuthorizationEndpointRequest reads it from
- *   the plan config's client block (OID4VP-1FINAL-5.1).
- * - `rical_b64(rical)` - B3: the seed-minted Reader Issuer CA List
- *   (ISO/IEC 18013-5 F.3.2); the verifier spec consumed it, this one
- *   never did - RegisterRical arms the mDL x5c-against-RICAL
- *   conditions (790 skips). The RICAL REPLACES the single trust
- *   anchor: when the RICAL consumes, the anchor PEM must stay OUT of
- *   the client block (the suite rejects carrying both). */
+ * - `verifier_info(verifier)` - B1: the verifier's attestations (the
+ *   OID4VP-1FINAL-5.1 array form; the suite's
+ *   AddVerifierInfoToAuthorizationEndpointRequest reads it from the
+ *   plan config's client block).
+ * - `rical_b64(rical)` - B3: NOT consumed here. The holder implements
+ *   no RICAL-based reader authorization (an optional ISO 18013-5
+ *   wallet policy; OpenID4VP leaves wallet policy to the ecosystem) -
+ *   advertising a RICAL asserted a policy the holder does not honor
+ *   and made the suite's own pre-flight
+ *   (ValidateConfiguredClientCertificatesAgainstRical, WARNING-grade
+ *   by design: it validates the CONFIG, not the wallet) fire on every
+ *   x509-prefix module. With no RICAL member the suite logs an INFO
+ *   skip and the wallet verifies requests per its own 5.9 prefix
+ *   rules - the trust model the holder actually ships. The verifier
+ *   spec (oid4vp.spec.ts) consumes the RICAL for ITS verifier-side
+ *   chain checks; the asymmetry is true to each side's real posture. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function seedClientExtras(): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const seedOut = seedOutPath();
   if (!existsSync(seedOut)) return out;
   const text = readFileSync(seedOut, 'utf8');
-  const vi = text.match(/^verifier_info\(verifier\)=(\{.*\})$/m)?.[1];
+  const vi = text.match(/^verifier_info\(verifier\)=(\[.*\]|\{.*\})$/m)?.[1];
   if (vi) {
     try {
       out.verifier_info = JSON.parse(vi);
@@ -86,15 +93,6 @@ function seedClientExtras(): Record<string, unknown> {
       /* the line is malformed - skip the member (the suite skips its
        * conditions; no worse than before the pass-through) */
     }
-  }
-  const rical = text.match(/^rical_b64\(rical\)=([A-Za-z0-9+/=]+)$/m)?.[1];
-  if (rical) {
-    out.rical = rical;
-    // The RICAL replaces the single anchor - the anchor PEM must NOT
-    // ride the client block when the RICAL is present (the suite's
-    // both-forms rejection). This spec carries the anchor in the
-    // TOP-LEVEL/credential blocks only; nothing in the client block
-    // competes here.
   }
   return out;
 }
