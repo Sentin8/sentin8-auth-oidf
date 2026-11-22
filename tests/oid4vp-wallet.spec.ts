@@ -211,6 +211,15 @@ function walletCampaignBlock(vp: boolean): Record<string, unknown> | undefined {
   return {
     holder_url: holderUrl,
     holder_user_id: process.env.WALCERT_HOLDER_USER_ID ?? '',
+    // The holder's registered callback, derived from THIS run's suite
+    // base (the mock AS registers exactly this in the plan config's
+    // client block). The holder is a deployed, target-agnostic service
+    // - it cannot infer which suite instance is driving it, so the
+    // harness states it per interaction (the same rule as the
+    // issuer/AS metadata overrides the intake already carries).
+    redirect_uri:
+      process.env.WALCERT_HOLDER_REDIRECT_URI ??
+      `${SUITE_BASE}/test/a/sentin8-wallet/callback`,
     ...(vp ? { vp_request: true } : {}),
   };
 }

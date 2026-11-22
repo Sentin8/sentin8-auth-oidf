@@ -997,6 +997,14 @@ async function runModuleOnPage(
             offer_url: offerUrl,
             issuer_metadata_url: issuerMetaUrl,
             as_metadata_url: asMetaUrl,
+            // The client's registered callback for THIS interaction: the
+            // mock AS registered the campaign's value in the plan
+            // config's client block, and the holder (a deployed,
+            // target-agnostic service) must name the same one at PAR and
+            // at the token exchange (RFC 6749 4.1.3).
+            ...(walletCampaign.redirect_uri
+              ? { redirect_uri: String(walletCampaign.redirect_uri) }
+              : {}),
           }),
         });
         if (!prepResp.ok) {

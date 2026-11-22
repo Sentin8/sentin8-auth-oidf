@@ -46,6 +46,160 @@ fi
 # The suite target rides EVERY spec process below (env.ts reads it).
 export CONFORMANCE_SUITE_TARGET="${CONFORMANCE_SUITE_TARGET:-rig}"
 
+# ── Concurrency guard (two layers) ───────────────────────────────
+#
+# A suite ALIAS admits ONE live module at a time. Starting a second
+# campaign on an alias whose module is mid-flight makes the suite KILL
+# the first one ("Stopping test due to alias conflict - before this
+# test finished, you have started another test using the same alias"),
+# and the victim lands in a terminal INTERRUPTED state that no rerun of
+# the survivor repairs. The visible symptom is a plan that "looks
+# stuck" - it is not stuck, it was murdered.
+#
+# The exposure is worst for the modules that PARK: the
+# `par-attempt-to-use-expired-request_uri` cells sleep 600s by design,
+# so a 10-minute window exists in which an innocuous-looking second run
+# destroys them. Two layers, because they catch different accidents:
+#
+#   1. LOCAL - any other playwright/conformance process (the same
+#      machine, a forgotten background run, a second terminal).
+#   2. ALIAS - a live module on the suite for the alias about to be
+#      driven (a run started from another machine or container).
+#
+# Both REFUSE rather than wait: silently queueing a campaign behind an
+# unknown one hides the real problem and makes runtimes unreadable.
+
+# Layer 1: no competing local run.
+#
+# Two mechanisms, deliberately not one:
+#   - flock makes mutual exclusion between `conformance-run-all.sh`
+#     instances ATOMIC (correct under any race, no process parsing).
+#   - a process scan catches a stray DIRECT `npx playwright test` (or a
+#     leftover foreground module) that never took the lock - the shape
+#     of the second incident, which flock alone cannot see.
+# The scan excludes this process and its ANCESTORS (walking ppid), so it
+# can never match the caller's own `bash conformance/...` invocation.
+guard_no_local_run() {
+  local lock="$TMP/run.lock"
+  mkdir -p "$TMP"
+  exec 9>"$lock"
+  if ! flock -n 9; then
+    echo "[conformance-run-all] FATAL: another conformance run holds $lock." >&2
+    echo "  A second campaign on the same alias makes the suite INTERRUPT the" >&2
+    echo "  first one (terminal - no rerun repairs it). Wait for it to finish." >&2
+    exit 1
+  fi
+  # The ancestry set: self + every parent, so the scan below cannot see
+  # the shell that invoked us (the ps self-exclusion alone is fragile -
+  # awk's $1 comparison depends on how ps renders the pid column).
+  local ancestors=" $$ "
+  local p=$$
+  while [ "$p" != "0" ] && [ -n "$p" ]; do
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    [ -n "$p" ] || break
+    ancestors="$ancestors$p "
+  done
+  local live
+  live=$(ps -eo pid=,args= 2>/dev/null \
+    | grep -E 'playwright([ ]|.*/)test([ ]|$)' \
+    | while read -r pid rest; do
+        case "$ancestors" in *" $pid "*) continue ;; esac
+        printf '%s %s\n' "$pid" "$rest"
+      done || true)
+  if [ -n "$live" ]; then
+    echo "[conformance-run-all] FATAL: a playwright run is live on this host:" >&2
+    printf '%s\n' "$live" | sed 's/^/  /' >&2
+    echo "  A second campaign on the same alias makes the suite INTERRUPT the" >&2
+    echo "  first one (terminal - no rerun repairs it). Wait for it to finish," >&2
+    echo "  or stop it deliberately, then re-run." >&2
+    exit 1
+  fi
+}
+
+# Layer 2: no live module on the suite for this alias. Bounded to the
+# most recent plans, so the check costs one API call rather than a full
+# scan.
+#
+# ORDERING MATTERS: the suite's paginator defaults to
+# `Sort.unsorted()` (MongoDB natural order, i.e. OLDEST first), so a
+# plain `GET /api/plan?length=15` returns the fifteen OLDEST plans and
+# never sees a campaign that just started - it reports "free" no matter
+# what is running. The listing UI avoids the same trap with
+# `order=started,desc`; this check must do the same.
+guard_alias_free() {
+  local alias="$1"
+  [ "${CONFORMANCE_SUITE_TARGET:-rig}" = "hosted" ] || return 0
+  [ -n "${CONFORMANCE_SUITE_TOKEN:-}" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local verdict
+  verdict=$(SUITE_TOKEN="$CONFORMANCE_SUITE_TOKEN" \
+            SUITE_URL="${CONFORMANCE_SUITE_URL:-https://www.certification.openid.net}" \
+            ALIAS="$alias" python3 - <<'PY' 2>/dev/null || echo "unknown"
+import json, os, sys, urllib.request
+
+base = os.environ["SUITE_URL"].rstrip("/")
+alias = os.environ["ALIAS"]
+token = os.environ["SUITE_TOKEN"]
+
+
+def get(path):
+    req = urllib.request.Request(
+        f"{base}{path}", headers={"Authorization": f"Bearer {token}"}
+    )
+    return json.load(urllib.request.urlopen(req, timeout=25))
+
+
+# ORDERING: the paginator defaults to Sort.unsorted() (MongoDB natural
+# order, OLDEST first), so the list must ask for `order=started,desc` or
+# it inspects fifteen ancient plans and always reports "free".
+try:
+    plans = get("/api/plan?length=8&order=started,desc")["data"]
+except Exception:
+    print("unknown")
+    sys.exit(0)
+
+# The LIST view omits per-module status entirely (it is null for every
+# module, live or not) - the per-plan DETAIL is the only surface that
+# carries it. So resolve the newest plan per alias, then read it.
+newest_by_alias = {}
+for plan in plans:
+    a = (plan.get("config") or {}).get("alias")
+    if a and a not in newest_by_alias:
+        newest_by_alias[a] = plan.get("_id")
+
+plan_id = newest_by_alias.get(alias)
+if not plan_id:
+    print("free")
+    sys.exit(0)
+
+try:
+    detail = get(f"/api/plan/{plan_id}")
+except Exception:
+    print("unknown")
+    sys.exit(0)
+
+live = [
+    f"{plan_id}:{m.get('testModule')}({str(m.get('status')).upper()})"
+    for m in (detail.get("modules") or [])
+    if (m.get("status") or "").upper() in ("RUNNING", "WAITING")
+]
+print("live " + " ".join(live) if live else "free")
+PY
+)
+  case "$verdict" in
+    free|unknown) return 0 ;;
+    live\ *)
+      echo "[conformance-run-all] FATAL: alias '$alias' already has a live module:" >&2
+      echo "  ${verdict#live }" >&2
+      echo "  Starting another would INTERRUPT it permanently. Wait, or stop it," >&2
+      echo "  then re-run." >&2
+      exit 1
+      ;;
+  esac
+}
+
+guard_no_local_run
+
 # The battery order: simple to hard security (DESIGN 9a.2) - the plain
 # OIDC Core families first (basic/config/dynamic/logout, then the
 # response-type families implicit/hybrid/formpost, session management),
@@ -118,6 +272,10 @@ for fam in "${requested[@]}"; do
   fi
   log="$LOGDIR/battery-$fam.log"
   echo "[conformance-run-all] family '$fam' (env $env_slug, alias $alias, profile $profile) -> $log"
+  # Refuse to start on an alias someone else is already driving (layer
+  # 2 of the concurrency guard - a live module here would be INTERRUPTED
+  # by us, permanently).
+  guard_alias_free "$alias"
   if [ -f "$USERENV" ]; then
     set -a; . "$USERENV"; set +a
   fi
