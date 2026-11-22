@@ -97,7 +97,7 @@ stays PENDING at the plan gate.
 | `tests/logout.spec.ts` | RP-Initiated + Back-Channel Logout |
 | `tests/oid4vci-issuer.spec.ts` | OID4VCI 1.0 Final Issuer - credential endpoint family (private_key_jwt + DPoP, SD-JWT VC; the suite acts as the wallet) |
 | `tests/oid4vci-wallet.spec.ts` | OID4VCI 1.0 Final Wallet - credential-offer front channel + authorization-code grant (the suite acts as the wallet against our issuer) |
-| `tests/oid4vci-haip.spec.ts` | OID4VCI 1.0 Issuer HAIP - client-attestation auth (`OAuth-Client-Attestation` + `OAuth-Client-Attestation-PoP`) |
+| `tests/oid4vci-haip.spec.ts` | OID4VCI 1.0 Issuer HAIP - client-attestation auth (`OAuth-Client-Attestation` + `OAuth-Client-Attestation-PoP`); both credential formats (SD-JWT VC + mdoc) x the flow matrix (auth DESIGN §9a.19x - the mdoc cells ride the ISO 18013-5 certificate-profile pass: the DS certificate's critical EKU + the per-issuer CRL publisher) |
 | `tests/oid4vp.spec.ts` | OID4VP verifier - the HAIP verifier plan + the plain plan over cert-vp |
 | `tests/smoke.spec.ts` | Harness boot check - one module end-to-end through the Flutter auth-ui (not a certification campaign) |
 | `results/` | Per-module logs + the campaign results JSON (gitignored) |

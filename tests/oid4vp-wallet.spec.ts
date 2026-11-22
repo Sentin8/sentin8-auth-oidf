@@ -39,6 +39,16 @@ import { dirname, join } from 'node:path';
 
 let suiteApi: SuiteApi;
 let planIds: string[] = [];
+/**
+ * The BOOTSTRAP plans: the VCI wallet plans that exist only to mint one
+ * test credential into the holder's vault (`fillVault` + the mdoc vault
+ * swap). They run exactly one of their four modules by design, so on the
+ * certification portal they read as a permanently half-run `OID4VCI
+ * Wallet` plan (`1 passed / 3 not run`) - scaffolding sitting next to
+ * the plans the reviewer actually certifies. The teardown deletes them
+ * (auth DESIGN 9a.27); the CELL plans in `planIds` stay.
+ */
+const bootstrapPlanIds: string[] = [];
 
 const config: SuiteTestConfig = {
   alias: CONFORMANCE_ALIAS,
@@ -263,6 +273,19 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  // Retire the bootstrap plans FIRST, so their outcome lands in the step
+  // log written below. They served their one module and must not linger
+  // on the portal as a half-run OID4VCI Wallet entry (auth DESIGN 9a.27).
+  // Best-effort - a suite prune racing the delete is not a test failure,
+  // but a refused delete is logged so it cannot pass unnoticed. When
+  // beforeAll never got as far as constructing the client there is
+  // nothing to talk to; the plan ids are then empty too.
+  if (suiteApi) {
+    for (const pid of bootstrapPlanIds) {
+      const gone = await suiteApi.deletePlan(pid);
+      logStep(`bootstrap plan ${pid}: ${gone ? 'deleted' : 'DELETE refused'}`);
+    }
+  }
   writeFileSync(join(resultsDir(), 'oid4vp-wallet-steps.log'), stepLog());
   if (planIds.length > 0) {
     writeFileSync(join(resultsDir(), 'oid4vp-wallet-plans.txt'), planIds.join('\n'));
@@ -364,7 +387,22 @@ async function runPlanCells(
     // marks 'only correct if the credential lacks the better options'
     // when the credential does lack them). Only UNEXPECTED warnings are
     // violations - a WARNING verdict with an empty failure list.
-    if (run.warnings.length > 0 && run.result !== 'WARNING') {
+    //
+    // The EXPECTED preference-order warning
+    // (`EnsureMostPreferredDcqlClaimSetReturned`): the suite's OWN mock
+    // issuer mints `place_of_birth` with `country` ONLY
+    // (AbstractCreateSdJwtCredential builds the object from a single
+    // `country` = "FR" disclosure - no `locality`, no `region`), so the
+    // `place-of-birth-member` cell's `claim_sets` preference order
+    // (locality -> region -> country) can only ever resolve to the LAST
+    // option. The suite's own message states the caveat: "this is only
+    // correct if the credential does not contain the claims of the more
+    // preferred options" - exactly our case. A conforming wallet MUST
+    // return the first SATISFIABLE option, which is `country`.
+    const expectedPreferenceWarning =
+      /EnsureMostPreferredDcqlClaimSetReturned/.test(run.warnings.join(' ')) &&
+      run.result === 'WARNING';
+    if (run.warnings.length > 0 && run.result !== 'WARNING' && !expectedPreferenceWarning) {
       failures.push(`${m.testModule}: ${run.warnings.join(' | ')}`);
     }
     const out = join(resultsDir(), 'logs');
@@ -413,6 +451,11 @@ async function fillVault(
   const intakeClient = intakeClientBlock();
   const intakeConfig: SuiteTestConfig = {
     ...config,
+    // The INTAKE plan rides the VCI wallet PLAN NAME - its plan-page
+    // description must name the VCI role, not the VP spec that created
+    // it (the spread would carry the parent spec's OID4VP description
+    // onto the hosted plans page under oid4vci-1_0-wallet-test-plan).
+    description: 'Sentin8 auth certification run - OID4VCI Wallet (VP intake)',
     server: {
       ...((config.server as Record<string, unknown>) ?? {}),
       jwks: serverJwks,
@@ -449,7 +492,9 @@ async function fillVault(
       client_auth_type: 'private_key_jwt',
     },
   );
-  planIds.push(intakePlan.id);
+  // The bootstrap (vault fill) plan: minted, driven through its ONE
+  // intake module, then deleted in the teardown (auth DESIGN 9a.27).
+  bootstrapPlanIds.push(intakePlan.id);
   logStep(`intake plan ${intakePlan.id}: ${intakePlan.modules.length} modules`);
   const happy = (await suiteApiRef.getPlan(intakePlan.id)).modules
     .find((m) => /issuer-initiated-by-value|happy-path|credential-issuance/i.test(m.testModule) && !m.result);
@@ -542,6 +587,10 @@ test('OID4VP Wallet - run every module-variant to terminal', async ({ browser })
         const swapClient = intakeClientBlock();
         const intakeConfig: SuiteTestConfig = {
           ...config,
+          // The mdoc SWAP intake plan: same plan-name vs description
+          // pairing as the fill intake above (the VCI wallet plan name
+          // carries its own description, never the parent's).
+          description: 'Sentin8 auth certification run - OID4VCI Wallet (VP mdoc intake)',
           server: {
             ...((config.server as Record<string, unknown>) ?? {}),
             jwks: swapJwks,
@@ -580,7 +629,9 @@ test('OID4VP Wallet - run every module-variant to terminal', async ({ browser })
             client_auth_type: 'private_key_jwt',
           },
         );
-        planIds.push(intakePlan.id);
+        // The bootstrap (mdoc vault swap) plan: same lifecycle as the
+        // vault fill above - one module, then deleted (DESIGN 9a.27).
+        bootstrapPlanIds.push(intakePlan.id);
         logStep(`intake plan ${intakePlan.id}: ${intakePlan.modules.length} modules`);
         const happy = (await suiteApi.getPlan(intakePlan.id)).modules
           .find((m) => /issuer-initiated-by-value|happy-path|credential-issuance/i.test(m.testModule) && !m.result);

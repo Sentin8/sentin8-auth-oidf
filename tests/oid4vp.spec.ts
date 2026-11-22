@@ -248,6 +248,52 @@ test.beforeAll(async ({ browser }) => {
   );
   planIds.push(haipPlan.id);
   logStep(`haip plan ${haipPlan.id}: ${haipPlan.modules.length} modules`);
+  // The ISO mDL verifier seat (OIDF-VPERMDL-1): the catalog's HAIP
+  // verifier plan carries BOTH credential formats
+  // (VP1FinalVerifierCredentialFormat) - the second plan create swaps
+  // the format axis to iso_mdl. The mdoc cells present the SUITE's
+  // self-minted DeviceResponse (CreateMdocCredential: the suite's own
+  // pre-provisioned mDL/PhotoID/EU-PID documents); the DS chain rides
+  // the suite's own IACA root (/mdoc-iaca-root.pem, fetched live - the
+  // same anchor the wallet spec's iso_mdl cells pin) and the ISO_MDL
+  // variant's VICAL checks skip clean when no VICAL is configured
+  // (skipIfObjectsMissing(vical), INFO-level skip). Format-aware
+  // result/log segments disambiguate the two plans' module rows.
+  let verifierIacaPem = '';
+  try {
+    const res = await fetch(`${SUITE_BASE}/mdoc-iaca-root.pem`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const pem = (await res.text()).trim();
+      if (pem.includes('BEGIN CERTIFICATE')) verifierIacaPem = pem;
+    }
+  } catch {
+    /* the mdoc cell stays unpinned when the endpoint is absent */
+  }
+  const mdocCfg: SuiteTestConfig = {
+    ...planConfig,
+    ...(verifierIacaPem
+      ? {
+          // ValidateMdocDsCertificateChain reads the TOP-LEVEL env
+          // member; the nested credential members feed the sd-jwt
+          // chain conditions (the same dual-write the wallet spec's
+          // cellConfig does).
+          credential_trust_anchor_pem: verifierIacaPem,
+          credential: {
+            ...(planConfig.credential as Record<string, unknown>),
+            trust_anchor_pem: verifierIacaPem,
+          },
+        }
+      : {}),
+  } as SuiteTestConfig;
+  const haipMdlPlan = await suiteApi.createPlan(
+    'oid4vp-1final-verifier-haip-test-plan',
+    mdocCfg,
+    { credential_format: 'iso_mdl', response_mode: 'direct_post.jwt' },
+  );
+  planIds.push(haipMdlPlan.id);
+  logStep(`haip-mdl plan ${haipMdlPlan.id}: ${haipMdlPlan.modules.length} modules`);
   // The PLAIN verifier plan: no pinned axes - the create carries the
   // full free set (the plan name is the ALPHA plain profile; our
   // verifier serves the same surfaces as the HAIP cells).
@@ -278,7 +324,22 @@ test('OID4VP verifier - run every module to terminal', async ({ browser }) => {
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);
   const failures: string[] = [];
+  // The plan's credential-format axis (the iso_mdl verifier seat's
+  // log/result segment - the two HAIP plans carry the same modules,
+  // the filename must disambiguate them). The creator side accepts the
+  // spec's enum spellings only (sd_jwt_vc | iso_mdl) - the fallback
+  // label for a plan whose modules expose no variant (plain modules
+  // without an axis) stays UNSET (the creator keeps the mixed
+  // sign-in DCQL, the sdjwtvc seats pass via the object's own
+  // single-entry query).
+  const planFormats = new Map<string, string>();
   for (const cellPlanId of planIds) {
+    const plan = await suiteApi.getPlan(cellPlanId);
+    const raw = String(plan.variant?.credential_format ?? '');
+    planFormats.set(cellPlanId, raw === 'sd_jwt_vc' || raw === 'iso_mdl' ? raw : '');
+  }
+  for (const cellPlanId of planIds) {
+    const fmtLabel = (planFormats.get(cellPlanId) || 'sdjwtvc').replace(/[^a-z0-9]+/gi, '_').replace(/_+$/, '');
     for (const m of (await suiteApi.getPlan(cellPlanId)).modules) {
       if (onlyList.length > 0 && !onlyList.includes(m.testModule)) {
         logStep(`SKIP-ONLY ${m.testModule}`);
@@ -294,7 +355,12 @@ test('OID4VP verifier - run every module to terminal', async ({ browser }) => {
         // The plan's pinned axes ride the runner create (the module
         // instance's cell axis - without it the create 500s "Missing
         // value for required variant parameter").
-        (m.variant ?? undefined) as Record<string, string> | undefined);
+        (m.variant ?? undefined) as Record<string, string> | undefined,
+        // The verifier seat's format knob (auth DESIGN §9a.27): the
+        // plan's credential-format axis feeds the creator's DCQL
+        // selection (the iso_mdl plan's cells mint mso_mdoc-only
+        // queries; the sdjwtvc plans the dc+sd-jwt entry).
+        planFormats.get(cellPlanId));
       expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
       expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
       if (run.warnings.length > 0) {
@@ -302,7 +368,7 @@ test('OID4VP verifier - run every module to terminal', async ({ browser }) => {
       }
       const out = join(resultsDir(), 'logs');
       mkdirSync(out, { recursive: true });
-      writeFileSync(join(out, `oid4vp-${m.testModule}.json`), JSON.stringify(run.log));
+      writeFileSync(join(out, `oid4vp-${fmtLabel}-${m.testModule}.json`), JSON.stringify(run.log));
     }
   }
   expect(failures, `warning-zero violations:\n${failures.join('\n')}`).toEqual([]);

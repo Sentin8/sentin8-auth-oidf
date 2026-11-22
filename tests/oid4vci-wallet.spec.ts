@@ -17,7 +17,7 @@
 import { test, expect } from '@playwright/test';
 import { SuiteApi, ACCEPTABLE, standardBrowserAutomation, type SuiteTestConfig, type SuiteClientConfig } from '../fixtures/suite.js';
 import { runModule, planResults } from '../fixtures/runner.js';
-import {certDiscoveryUrl, certAuthHost, suiteCallback, CONFORMANCE_ALIAS, resultsDir, seedOutPath, certUser } from '../fixtures/env.js';
+import { certDiscoveryUrl, certAuthHost, suiteCallback, CONFORMANCE_ALIAS, resultsDir, seedOutPath, certUser, SUITE_BASE } from '../fixtures/env.js';
 import { logStep, stepLog } from '../fixtures/log.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -281,10 +281,11 @@ test.afterAll(async () => {
 });
 
 test('OID4VCI Wallet - run every module-variant to terminal', async ({ browser }) => {
-  // 3 HAIP cells x (1 identity registration + up to 23 module-variants each)
-  // + the plain plan: a 30-min cap interrupts the tail cells mid-run (the
-  // fapi2 battery never starts). The three-cell campaign needs 60 min.
-  test.setTimeout(3_600_000);
+  // 3 HAIP cells x 2 formats (OIDF-VCIMDOC-1: sd_jwt_vc + mdoc) x (1
+  // identity registration + up to 23 module-variants each) + the plain
+  // plan: the campaign block doubles in the mdoc wave - 120 min covers
+  // the matrix (the sd_jwt_vc-only campaign measured ~60m).
+  test.setTimeout(7_200_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);
   const failures: string[] = [];
@@ -351,27 +352,74 @@ test('OID4VCI Wallet - run every module-variant to terminal', async ({ browser }
     });
     logStep(`attestation-identity registration: HTTP ${reg.status}`);
     expect(reg.status, 'the attester identity must register').toBe(200);
+    // The mdoc cells' trust anchor (OIDF-VCIMDOC-1): the suite's mock
+    // issuer signs the mdoc DS cert under its OWN IACA root ('/mdoc-
+    // iaca-root.pem', CreateMdocCredentialForVCI) - resolve it LIVE so
+    // the holder's vault verification anchors the suite-minted holding
+    // (the same wiring the VP battery's cellConfig('mdoc') uses).
+    let suiteIacaPem = '';
+    try {
+      // SUITE_BASE already carries no trailing path beyond the host (the
+      // suite's static assets live at the host root) - fetch directly.
+      const res = await fetch(`${SUITE_BASE}/mdoc-iaca-root.pem`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const pem = (await res.text()).trim();
+        if (pem.includes('BEGIN CERTIFICATE')) suiteIacaPem = pem;
+      }
+    } catch {
+      /* the mdoc cells stay unpinned when the endpoint is absent */
+    }
+    if (suiteIacaPem) logStep(`mdoc IACA anchor resolved from the suite (${suiteIacaPem.length} bytes)`);
+    else logStep('WARNING: no suite IACA PEM resolved - the mdoc cells run without the DS-chain anchor');
     const haipFlowCells: Array<{ flow?: string; offer?: string }> = [
       { flow: 'wallet_initiated' },
       { flow: 'issuer_initiated', offer: 'by_value' },
       { flow: 'issuer_initiated', offer: 'by_reference' },
     ];
+    // The credential-FORMAT cells: the certification catalog's wallet
+    // HAIP plan carries BOTH formats (VCI1FinalCredentialFormat);
+    // sd_jwt_vc runs first (the proven cells), then the mdoc trio with
+    // the suite IACA anchor pinned into the config (the DS-chain
+    // validator reads credential_trust_anchor_pem / the nested
+    // credential.trust_anchor_pem members).
+    const haipFormatCells: Array<{ format: string; label: string }> = [
+      { format: 'sd_jwt_vc', label: 'sdjwtvc' },
+      ...(suiteIacaPem ? [{ format: 'mdoc', label: 'mdoc' }] : []),
+    ];
+    for (const formatCell of haipFormatCells) {
     for (const cell of haipFlowCells) {
       // The plan PINS dpop + plain response variants on every module -
       // the create rejects a user-set value on a pinned axis ("already
       // sets this variant"). Only the FREE axes ride the create.
       const createVariant: Record<string, string> = {
-        credential_format: 'sd_jwt_vc',
+        credential_format: formatCell.format,
       };
       if (cell.flow) createVariant.vci_authorization_code_flow_variant = cell.flow;
       if (cell.offer) createVariant.vci_credential_offer_variant = cell.offer;
+      // The mdoc cell config: the IACA anchor rides BOTH the top-level
+      // credential_trust_anchor_pem (ValidateMdocDsCertificateChain)
+      // and the nested credential.trust_anchor_pem - overlay on the
+      // base config, never replace the whole sections (the merge rule).
+      const cellConfig: SuiteTestConfig = formatCell.format === 'mdoc'
+        ? ({
+            ...config,
+            credential_trust_anchor_pem: suiteIacaPem,
+            credential: {
+              ...((config.credential as Record<string, unknown>) ?? {}),
+              trust_anchor_pem: suiteIacaPem,
+              status_list_trust_anchor_pem: suiteIacaPem,
+            },
+          } as SuiteTestConfig)
+        : config;
       const haipPlan = await suiteApi.createPlan(
         'oid4vci-1_0-wallet-haip-test-plan',
-        config,
+        cellConfig,
         createVariant,
       );
       planId = haipPlan.id;
-      logStep(`haip plan ${haipPlan.id} (${cell.flow ?? '?'}/${cell.offer ?? 'n/a'}): ${haipPlan.modules.length} module-variants`);
+      logStep(`haip plan ${haipPlan.id} (${formatCell.label}/${cell.flow ?? '?'}/${cell.offer ?? 'n/a'}): ${haipPlan.modules.length} module-variants`);
       for (const modEntry of (await suiteApi.getPlan(haipPlan.id)).modules) {
         const m = modEntry;
         const ownVariant = (m.variant ?? {}) as Record<string, string>;
@@ -380,16 +428,17 @@ test('OID4VCI Wallet - run every module-variant to terminal', async ({ browser }
           continue;
         }
         const run = await runModule(suiteApi, browser, haipPlan.id, m.testModule,
-          { ...config, browser: harnessBrowserBlock }, 600_000, ownVariant);
+          { ...cellConfig, browser: harnessBrowserBlock }, 600_000, ownVariant);
         expect(run.status, `${m.testModule} must finish (not INTERRUPTED)`).toBe('FINISHED');
         expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
         if (run.warnings.length > 0) {
-          failures.push(`${m.testModule}: ${run.warnings.join(' | ')}`);
+          failures.push(`[${formatCell.label}/${cell.flow ?? '?'}] ${m.testModule}: ${run.warnings.join(' | ')}`);
         }
         const out = join(resultsDir(), 'logs');
         mkdirSync(out, { recursive: true });
-        writeFileSync(join(out, `oid4vci-wallet-${m.testModule}.json`), JSON.stringify(run.log));
+        writeFileSync(join(out, `oid4vci-wallet-${formatCell.label}-${m.testModule}.json`), JSON.stringify(run.log));
       }
+    }
     }
   }
 

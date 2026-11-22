@@ -44,6 +44,10 @@ export interface SuitePlan {
   id: string;
   planName: string;
   modules: SuiteModule[];
+  /** The plan's create axes (the pinned variant parameters - the
+   * credential_format axis the harness feeds the verifier-request
+   * creator's DCQL selection). */
+  variant?: Record<string, string>;
 }
 
 export interface SuiteClientConfig {
@@ -376,6 +380,7 @@ export class SuiteApi {
       id: raw._id ?? raw.id,
       planName: raw.planName,
       modules: raw.modules ?? [],
+      variant: raw.variant ?? undefined,
     };
   }
 
@@ -455,6 +460,34 @@ export class SuiteApi {
   /** A runner's current exposed state (browser URLs + status). */
   async getRunner(runnerId: string): Promise<any> {
     return this.request(`/api/runner/${runnerId}`);
+  }
+
+  /**
+   * Delete a plan by id (the suite's `DELETE /api/plan/<id>`, answering
+   * 204). Used to retire the battery's BOOTSTRAP plans - the VCI wallet
+   * plans that exist only to mint one test credential into the holder's
+   * vault and would otherwise sit on the certification portal as a
+   * permanently half-run `OID4VCI Wallet` entry (auth DESIGN 9a.27,
+   * "Bootstrap plans are deleted once they have served").
+   *
+   * A plan that is already gone (404) is NOT an error: the suite prunes
+   * old plans on its own schedule, so the sweep must be idempotent.
+   *
+   * @param planId The plan id (`_id` from the plan document).
+   * @returns True when the plan is gone (deleted now or already), false
+   *   when the suite refused the delete for another reason.
+   */
+  async deletePlan(planId: string): Promise<boolean> {
+    await this.ensureCookie();
+    try {
+      const res = await fetch(`${SUITE_BASE}/api/plan/${encodeURIComponent(planId)}`, {
+        method: 'DELETE',
+        headers: this.cookieHeader(),
+      });
+      return res.ok || res.status === 404;
+    } catch {
+      return false;
+    }
   }
 
   /** The auth header for raw fetch callers (the harness's

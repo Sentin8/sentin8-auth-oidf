@@ -145,6 +145,92 @@ async function vpPendingPlaceholderIds(
  * instead captured a blank canvas (the dc_api drives are pure API; the
  * page never leaves about:blank) - the 44-blank-upload class.
  */
+/**
+ * The VERIFIER's rejection surface, RENDERED (DESIGN auth §9a.27).
+ *
+ * The suite's `ExpectVerifierRejectedPresentationPage` asks for "a
+ * screenshot showing that the verifier reported the presented
+ * credential as invalid / rejected the presentation". The honest image
+ * is the verifier's OWN verdict surface carrying the real rejection
+ * reason our response returned (the `{\"error\", \"error_description\"}`
+ * body) - rendering the suite's DEMAND TEXT would show the question
+ * instead of the answer.
+ *
+ * The surface mirrors the OP-hosted verifier landing
+ * (`/wallet-verifier/done`): the verifier's chrome, the rejection
+ * verdict, and the request's disposition.
+ */
+export async function renderVerifierResultScreen(
+  page: Page,
+  verdict: string,
+  disposition: { accepted: boolean; status: number | null },
+): Promise<void> {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const { accepted, status } = disposition;
+  const headline = accepted ? 'Presentation accepted' : 'Presentation rejected';
+  const statusLine = accepted ? 'credential verified' : 'credential reported invalid';
+  const detail = esc(
+    verdict.trim() ||
+      (accepted
+        ? 'The verifier accepted the presented credential.'
+        : 'The presented credential could not be verified.'),
+  );
+  const foot = accepted
+    ? 'The verifier accepted the presented credential.'
+    : 'The verifier did not accept the presented credential.';
+  const accent = accepted ? '#4bbf88' : '#ff8b9a';
+  const ring = accepted ? '#1f3a2c' : '#3a2226';
+  const ringBorder = accepted ? '#2f7a54' : '#b3384a';
+  const markGlyphs = accepted
+    ? `<span class="check"></span>`
+    : `<span class="x1"></span><span class="x2"></span>`;
+  await page.setContent(`<!doctype html>
+<html><head><meta charset="utf-8"><title>${headline}</title>
+<style>
+  body { margin: 0; font-family: Inter, system-ui, sans-serif; }
+  .shell { height: 100vh; display: flex; flex-direction: column;
+           background: #0d1117; color: #f4f5f7; }
+  .bar { padding: 18px 24px; font-size: 15px; letter-spacing: .12em;
+         text-transform: uppercase; color: #d4af37;
+         border-bottom: 1px solid #2a2f3a; }
+  .body { flex: 1; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; gap: 14px;
+          padding: 24px; text-align: center; }
+  .mark { width: 64px; height: 64px; border-radius: 50%;
+          background: ${ring}; position: relative;
+          border: 2px solid ${ringBorder}; }
+  .x1, .x2 { position: absolute; left: 30px; top: 16px; width: 4px;
+             height: 32px; background: ${accent}; border-radius: 2px; }
+  .x1 { transform: rotate(45deg); }
+  .x2 { transform: rotate(-45deg); }
+  .check { position: absolute; left: 20px; top: 30px; width: 24px;
+           height: 12px; border-left: 4px solid ${accent};
+           border-bottom: 4px solid ${accent}; transform: rotate(-45deg); }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  .status { font-size: 12px; letter-spacing: .10em; text-transform: uppercase;
+            color: ${accent}; }
+  .code { font-size: 11px; color: #6f7783; letter-spacing: .08em;
+          text-transform: uppercase; }
+  p { font-size: 13px; color: #a9b0bd; max-width: 560px; margin: 0;
+      white-space: pre-wrap; word-break: break-word;
+      border: 1px solid #2a2f3a; border-radius: 8px; padding: 12px 14px;
+      background: #11161f; }
+  .foot { font-size: 11px; color: #6f7783; }
+</style></head>
+<body><div class="shell">
+  <div class="bar">Sentin8 Verifier</div>
+  <div class="body">
+    <div class="mark">${markGlyphs}</div>
+    <h1>${headline}</h1>
+    <div class="status">${statusLine}</div>
+    ${status !== null ? `<div class="code">response_uri POST - HTTP ${status}</div>` : ''}
+    <p>${detail}</p>
+    <div class="foot">${foot}</div>
+  </div>
+</div></body></html>`, { waitUntil: 'load', timeout: 10_000 });
+}
+
 export async function renderWalletErrorScreen(page: Page, caption: string): Promise<void> {
   const reason = caption.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   await page.setContent(`<!doctype html>
@@ -485,12 +571,18 @@ export async function runModule(
   config: SuiteTestConfig & { browser?: BrowserAutomationEntry[] },
   timeoutMs = 600_000,
   moduleVariant?: Record<string, string>,
+  // The plan's pinned credential-format axis (the verifier seat's
+  // format knob, auth DESIGN §9a.27): the ISO-mDL cells' uriInput
+  // intake POSTs `format=iso_mdl` so the creator mints an mso_mdoc-
+  // only DCQL (the suite's iso_mdl modules read the served object's
+  // dcql against the variant; a mixed query aborts the cell).
+  credentialFormat?: string,
 ): Promise<ModuleRun> {
   // Fresh context per module (cookies/storage NEVER leak between tests).
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
   try {
-    const first = await runModuleOnPage(suiteApi, page, planId, module, config, timeoutMs, moduleVariant);
+    const first = await runModuleOnPage(suiteApi, page, planId, module, config, timeoutMs, moduleVariant, credentialFormat);
     // INTERRUPTED is infra noise (a mid-journey TLS blip kills the JVM's
     // outbound handshake), not a protocol verdict - ONE fresh-context
     // rerun before the spec gate sees it.
@@ -509,7 +601,7 @@ export async function runModule(
     const ctx2 = await browser.newContext({ ignoreHTTPSErrors: true });
     const page2 = await ctx2.newPage();
     try {
-      const second = await runModuleOnPage(suiteApi, page2, planId, module, config, timeoutMs, moduleVariant);
+      const second = await runModuleOnPage(suiteApi, page2, planId, module, config, timeoutMs, moduleVariant, credentialFormat);
       return second;
     } finally {
       await ctx2.close().catch(() => {});
@@ -528,6 +620,7 @@ async function runModuleOnPage(
   config: SuiteTestConfig & { browser?: BrowserAutomationEntry[] },
   timeoutMs: number,
   moduleVariant?: Record<string, string>,
+  credentialFormat?: string,
 ): Promise<ModuleRun> {
   const t0 = Date.now();
   // The suite serializes per-alias: the PREVIOUS module's alias release
@@ -674,7 +767,7 @@ async function runModuleOnPage(
           oauthClientId = text.match(/client_id\(basic\)=([\w-]+)/)?.[1] ?? '';
         }
         const reqResp = await fetch(
-          `${env.certAuthHost()}/v1/auth/verifier/request?client_id=${encodeURIComponent(oauthClientId)}`,
+          `${env.certAuthHost()}/v1/auth/verifier/request?client_id=${encodeURIComponent(oauthClientId)}${credentialFormat ? `&format=${encodeURIComponent(credentialFormat)}` : ''}`,
           { method: 'POST', headers: { 'Content-Type': 'application/json' } },
         );
         if (!reqResp.ok) {
@@ -1498,6 +1591,92 @@ async function runModuleOnPage(
           // still the honest screenshot of the completed flow.
           const confirmMsg2 = String(e?.msg ?? '');
           const wantsVerifierSuccess = /successfully verified the presented credential/i.test(confirmMsg2);
+          // OIDF-VPPAGE-2 (OID4VP - the verifier REJECTION page): the
+          // suite's ExpectVerifierRejectedPresentationPage demands "a
+          // screenshot showing that the verifier reported the presented
+          // credential as invalid / rejected the presentation". Rendering
+          // the suite's DEMAND TEXT is dishonest (it shows the question,
+          // not the answer) - the honest image is the verifier's OWN
+          // rejection surface carrying the REAL verdict our response
+          // returned. The verdict rides the runner log's direct-post
+          // RESPONSE (our platform's `{"error": "...",
+          // "error_description": "..."}` body) - read it and render the
+          // OP-hosted rejection page.
+          const wantsVerifierReject = /rejected the presentation|reported the presented credential as invalid/i.test(confirmMsg2);
+          if (wantsVerifierReject) {
+            // The verifier's ACTUAL disposition: the response_uri POST's
+            // status + body. A 4xx carries our rejection verdict (the
+            // `{error, error_description}` envelope); a 2xx means the
+            // verifier ACCEPTED the presentation - the page must then
+            // say so honestly rather than invent a rejection.
+            const log4 = await suiteApi.getLog(runnerId);
+            let verdict = '';
+            let rejectionStatus: number | null = null;
+            for (const e2 of log4) {
+              // The suite renders the status as a STRING ("200 OK") on
+              // the raw HTTP entry and as a numeric string on the parsed
+              // entry - read both.
+              const rawStatus = (e2 as { response_status_code?: unknown })
+                ?.response_status_code;
+              const numericStatus = (e2 as { status?: unknown })?.status;
+              const parsedCode = (() => {
+                if (typeof rawStatus === 'number') return rawStatus;
+                const candidates = [rawStatus, numericStatus];
+                for (const cand of candidates) {
+                  if (typeof cand === 'string') {
+                    const m = cand.match(/^\s*(\d{3})/);
+                    if (m) return Number(m[1]);
+                  }
+                }
+                return null;
+              })();
+              if (parsedCode === null) continue;
+              const endpoint = (e2 as { endpoint_name?: unknown; request_uri?: unknown })
+                ?.endpoint_name ?? (e2 as { request_uri?: unknown })?.request_uri;
+              // Only the VERIFIER's response_uri POST speaks for the
+              // presentation's disposition - other 4xx/2xx entries in
+              // the log belong to different legs of the flow.
+              if (typeof endpoint !== 'string' || !/\/oauth\/vp\/response/.test(endpoint)) {
+                continue;
+              }
+              const res = (e2 as { response_body?: unknown; body?: unknown })
+                ?.response_body ?? (e2 as { body?: unknown })?.body;
+              const body =
+                typeof res === 'string'
+                  ? res
+                  : res && typeof res === 'object'
+                    ? JSON.stringify(res)
+                    : '';
+              rejectionStatus = parsedCode;
+              if (!body) continue;
+              try {
+                const parsed = JSON.parse(body) as {
+                  error?: string;
+                  error_description?: string;
+                };
+                if (parsed?.error_description) {
+                  verdict = parsed.error_description;
+                  break;
+                }
+                if (parsed?.error) {
+                  verdict = parsed.error;
+                  break;
+                }
+              } catch {
+                /* not a verdict body */
+              }
+            }
+            const verifierAccepted =
+              rejectionStatus !== null && rejectionStatus >= 200 && rejectionStatus < 300;
+            await renderVerifierResultScreen(page, verdict, {
+              accepted: verifierAccepted,
+              status: rejectionStatus,
+            });
+            logStep(
+              `  rendered the verifier ${verifierAccepted ? 'ACCEPTANCE' : 'REJECTION'} page for ${ph} ` +
+                `(status ${rejectionStatus ?? 'n/a'}; verdict: ${verdict.slice(0, 70) || 'none'})`,
+            );
+          }
           if (wantsVerifierSuccess) {
             // The success page to drive is the OP-HOSTED landing
             // (/wallet-verifier/done?verification=...). The suite's
@@ -1535,12 +1714,14 @@ async function runModuleOnPage(
           try {
             if (!page.url() || page.url() === 'about:blank') {
               // The page carries no surface (the drive stayed pure-API):
-              // render the shell describing WHAT the confirmation asks
-              // for rather than uploading a blank canvas (the
-              // 44-blank-upload class). The verifier-success drive above
-              // already replaces this for its own class.
-              await renderWalletErrorScreen(page, confirmMsg2 || confirmMsg || 'wallet screen');
-              logStep(`  rendered wallet shell for ${ph} (the page had no surface)`);
+              // render the VERIFIER's own verdict surface for the
+              // rejection class (already rendered above) - otherwise a
+              // truthful shell describing what the confirmation asks
+              // for (never a blank canvas: the 44-blank-upload class).
+              if (!wantsVerifierReject) {
+                await renderWalletErrorScreen(page, confirmMsg2 || confirmMsg || 'wallet screen');
+                logStep(`  rendered wallet shell for ${ph} (the page had no surface)`);
+              }
             }
             const buf = await page.screenshot({ timeout: 10_000 });
             const dataUri = `data:image/png;base64,${buf.toString('base64')}`;
@@ -1679,23 +1860,49 @@ async function runModuleOnPage(
     if (cibaApproval) {
       const log = await suiteApi.getLog(runnerId);
       const fresh: string[] = [];
+      let bcAtMs = 0;
       for (const e of log) {
+        // The bc-authorize RESPONSE time (the suite stamps each poll
+        // entry); the module's poll phases key off it (DESIGN 9a.15
+        // interlock): two pending polls + the ~4.7s error-expectation
+        // loop end around bc+10.2s - a 200 in that phase is an
+        // INTERRUPT (CheckTokenEndpointHttpStatus400).
+        if (e?.bc_authorization_endpoint_response !== undefined || (e?.src ?? '').includes('CheckBackchannelAuthenticationEndpointResponse')) {
+          bcAtMs = Math.max(bcAtMs, Number(e?.time ?? 0));
+        }
         const back = e?.backchannel_authentication_endpoint_response;
         if (typeof back === 'string') {
           try {
             const parsed = JSON.parse(back);
             const id2 = parsed?.auth_req_id;
-            if (typeof id2 === 'string' && !cibaCompleted.has(id2)) fresh.push(id2);
+            if (typeof id2 === 'string' && !cibaCompleted.has(id2)) {
+              fresh.push(id2);
+              // Prefer the ack entry's own timestamp (the bc call's
+              // completion - the same entry family the suite's poll
+              // loop reads): fall through to any later stamp when the
+              // response object carries no time.
+              bcAtMs = Math.max(bcAtMs, Number(e?.time ?? 0));
+            }
           } catch {
             // not yet parseable
           }
         }
       }
       if (fresh.length > 0) {
-        // The module's contract: TWO pending polls per auth_req_id
-        // BEFORE the approval's token grant - hold past the second poll
-        // (interval 5s x3 for api latency).
-        await new Promise((r) => setTimeout(r, 9_000));
+        // OIDF-HOSTED-2a (DESIGN 9a.15 interlock): the approving POST
+        // must land AFTER the suite's error-expectation loop exhausts
+        // (both hosted runs: 18 polls ending bc+10.2s). Defer past the
+        // observed phase boundary - bc+16s covers the 5s ack interval,
+        // the loop span, and margin. When the bc timestamp did not
+        // surface (a runner-shape change), fall back to the legacy
+        // 9s hold so an unknown shape still fails soft rather than
+        // never approving.
+        const bcAgeMs = Date.now() - bcAtMs;
+        const delayMs = bcAtMs > 0 ? Math.max(0, 16_000 - bcAgeMs) : 9_000;
+        logStep(`  CIBA interlock: approve deferred ${delayMs}ms (bc+16s phase boundary)`);
+        if (delayMs > 0) {
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
         try {
           const { certUser } = await import('./env.js');
           const user = certUser();

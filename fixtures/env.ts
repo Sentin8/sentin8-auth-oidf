@@ -128,8 +128,14 @@ export const HOSTED_TARGET = SUITE_TARGET === 'hosted';
  * `suite-token.env` (the one-time Google/GitLab sign-in + Tokens-page
  * mint). Undefined = the rig's devmode JSESSIONID strategy (today's
  * local behavior bit-for-bit).
+ *
+ * The file token applies ONLY on the hosted target (a rig session
+ * cannot consume an opaque hosted API token - a token-bearing rig run
+ * 401s at the first /api call, the mixed-posture bug): the stale
+ * suite-token.env must never leak a bearer into the rig mode.
  */
 export function suiteApiToken(): string | undefined {
+  if (!HOSTED_TARGET) return undefined;
   const exported = process.env.CONFORMANCE_SUITE_TOKEN;
   if (exported?.trim()) return exported.trim();
   try {

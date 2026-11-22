@@ -17,7 +17,10 @@
 // client_attestation x fapi_profile=vci_haip x sender_constrain=dpop x
 // fapi_request_method=unsigned. The cert env's security profile must be
 // `vci_haip` (the seed's vci_haip case sets allow_client_attestation +
-// the trust-anchor PEM + the expected attestation iss).
+// the trust-anchor PEM + the expected attestation iss). The battery
+// drives the FULL catalog matrix per OIDF-VCIMDOC-1: credential_format
+// (sd_jwt_vc + mdoc) x vci_authorization_code_flow_variant (the
+// FLOW_CELLS below) - 6 plans.
 //
 // Campaign rule (auth DESIGN §9a.10/§9a.11): every module terminal, no
 // FAILED/SKIPPED/INTERRUPTED, zero warnings.
@@ -168,6 +171,28 @@ const FLOW_CELLS = [
   { flow: 'issuer_initiated', offer: 'by_reference', label: 'issuer-initiated-by-reference' },
 ];
 
+// The credential-FORMAT cells (OIDF-VCIMDOC-1): the plan's
+// VCI1FinalCredentialFormat variant axis carries BOTH sd_jwt_vc and
+// mdoc in the certification catalog - the battery drives the full
+// matrix (format x flow). The mdoc cells ride the SAME surfaces (the
+// mso_mdoc configurations + mint_mdoc_credential mint, DESIGN 9a.29);
+// only the plan variant + the log filename segments change.
+const FORMAT_CELLS = [
+  { format: 'sd_jwt_vc', label: 'sdjwtvc' },
+  { format: 'mdoc', label: 'mdoc' },
+];
+
+// The per-format credential configuration the plan's vci.
+// credential_configuration_id names (OIDF-VCIMDOC-1: the suite's
+// VCIEnsureResolvedCredentialConfigurationMatchesSelection rejects a
+// configuration whose format differs from the cell's format axis -
+// the mdoc cells therefore resolve the issuer's mso_mdoc
+// configuration, the sd_jwt_vc cells keep the SD-JWT VC one).
+const FORMAT_CONFIG_ID: Record<string, string> = {
+  sd_jwt_vc: 'VerifiedPersonCredential',
+  mdoc: 'eu.europa.ec.eudi.pid.mdoc.1',
+};
+
 // The offer-cell config additions: the by_value cell's offer lands as
 // the JSON in vci.credential_offer_redirect_url's credential_offer
 // query param; the by_reference cell resolves the SAME offer through
@@ -221,15 +246,31 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
   // expired-request_uri module alone rides the 600s suite sleep; with
   // the F2EXPURI-1 margins the two-plan drive outgrew the 30m budget
   // (the battery-11 revalidation timed out at 1800s with the last fapi2
-  // module still driving). 90m covers the family + the credential plans
-  // with headroom.
-  test.setTimeout(5_400_000);
+  // module still driving).
+  // 3 flow cells x 2 formats - doubled plan count: the F2EXPURI-1
+  // margins + the family's fapi2 module block both ride every plan, so
+  // the cap scales with it (the sd_jwt_vc family alone measured 90m).
+  test.setTimeout(10_800_000);
   const onlyList = (process.env.OIDF_MODULES ?? '')
     .split(',').map((x) => x.trim()).filter(Boolean);
   const failures: string[] = [];
   const planIds: string[] = [];
+  for (const formatCell of FORMAT_CELLS) {
   for (const flowCell of FLOW_CELLS) {
-    const cellConfig = { ...config, ...offerCellConfig(flowCell) } as SuiteTestConfig;
+    const cellLabel = `${formatCell.label}-${flowCell.label}`;
+    // The per-format config: overlay the resolved configuration id on
+    // the vci section - MERGE, never replace (the merge rule below:
+    // a whole-vci spread clobbers credential_issuer_url and the
+    // metadata module dies 'Couldn't find vci.credential_issuer_url').
+    const cellConfig = {
+      ...config,
+      ...offerCellConfig(flowCell),
+      vci: {
+        ...(config.vci as Record<string, unknown> ?? {}),
+        ...(offerCellConfig(flowCell).vci as Record<string, unknown> ?? {}),
+        credential_configuration_id: FORMAT_CONFIG_ID[formatCell.format] ?? 'VerifiedPersonCredential',
+      },
+    } as SuiteTestConfig;
     const plan = await suiteApi.createPlan(
     'oid4vci-1_0-issuer-haip-test-plan',
     cellConfig,
@@ -244,13 +285,13 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
     // (offerCellConfig) - vci_credential_offer_variant is a WALLET-plan
     // axis the issuer plan rejects on create.
     {
-      credential_format: 'sd_jwt_vc',
+      credential_format: formatCell.format,
       vci_authorization_code_flow_variant: flowCell.flow,
     },
   );
   planId = plan.id;
   planIds.push(plan.id);
-  logStep(`plan ${planId} (flow=${flowCell.label}): ${plan.modules.length} module-variants`);
+  logStep(`plan ${planId} (format=${formatCell.label} flow=${flowCell.label}): ${plan.modules.length} module-variants`);
   {
     // Per-module variant resolution: the plan leaves SOME axes
     // user-selected per module (e.g. happy-flow needs sender_constrain
@@ -299,17 +340,18 @@ test('OID4VCI Issuer HAIP - run every module-variant to terminal', async ({ brow
       // 9a.19).
       expect(run.result, `${m.testModule} must not fail`).not.toMatch(/FAILED|SKIPPED|INTERRUPTED/);
       if (run.warnings.length > 0) {
-        failures.push(`[${flowCell.label}] ${m.testModule}: ${run.warnings.join(' | ')}`);
+        failures.push(`[${cellLabel}] ${m.testModule}: ${run.warnings.join(' | ')}`);
       }
       const out = join(resultsDir(), 'logs');
       mkdirSync(out, { recursive: true });
       // Duplicated modules (plain vs encrypted slices) write
       // distinct logs: the variant axes ride the filename.
       const enc = ownVariant.vci_credential_encryption ?? 'plain';
-      writeFileSync(join(out, `oid4vci-haip-${flowCell.label}-${m.testModule}-${enc}.json`), JSON.stringify(run.log));
+      writeFileSync(join(out, `oid4vci-haip-${cellLabel}-${m.testModule}-${enc}.json`), JSON.stringify(run.log));
     }
-    writeFileSync(join(resultsDir(), `oid4vci-haip-plan-${flowCell.label}.txt`), plan.id);
+    writeFileSync(join(resultsDir(), `oid4vci-haip-plan-${cellLabel}.txt`), plan.id);
     }
+  }
   }
   expect(failures, `warning-zero violations:\n${failures.join('\n')}`).toEqual([]);
 });
@@ -318,7 +360,7 @@ test('plan-level results are all acceptable', async () => {
   test.skip(!!(process.env.OIDF_MODULES ?? '').trim(), 'singles run - plan gate skipped');
   const failures: string[] = [];
   const latestIds = (readFileSync(join(resultsDir(), 'oid4vci-haip-steps.log'), 'utf8')
-    .match(/plan ([A-Za-z0-9]+) \(flow=/g) ?? []).map((l) => l.match(/plan ([A-Za-z0-9]+)/)?.[1] ?? '');
+    .match(/plan ([A-Za-z0-9]+) \(format=/g) ?? []).map((l) => l.match(/plan ([A-Za-z0-9]+)/)?.[1] ?? '');
   const gateIds = latestIds.length > 0 ? latestIds : (planId ? [planId] : []);
   for (const pid of gateIds) {
     const results = await planResults(suiteApi, pid);
