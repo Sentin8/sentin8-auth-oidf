@@ -202,6 +202,11 @@ test.beforeAll(async () => {
       holder_user_id: holderUserId,
       prepare_path: '/v1/issuance/prepare',
       complete_path: '/v1/issuance/complete',
+      // The registered callback for THIS interaction, derived from the
+      // same SUITE_BASE that built `client.redirect_uri` above (the
+      // holder is a deployed, target-agnostic service and must be told -
+      // it cannot infer which suite instance is driving it).
+      redirect_uri: process.env.WALCERT_HOLDER_REDIRECT_URI ?? suiteCallback(),
     };
     // The offer endpoint rides the SUITE (the mock issuer hosts the offer;
     // the runner's wallet-intake hook hands its URL to the holder) - the
