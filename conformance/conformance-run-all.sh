@@ -99,9 +99,17 @@ guard_no_local_run() {
     [ -n "$p" ] || break
     ancestors="$ancestors$p "
   done
+  # Match BOTH shapes a playwright run takes on this host:
+  #   npm exec playwright test ...             (this battery)
+  #   node .../@playwright/test/cli.js test    (the e2e suites)
+  # The second form matched neither `playwright test` nor `<dir>/test`, so
+  # an e2e run that bypassed scripts/with-ca.sh was invisible to this guard
+  # - the one-directional hole the shared fleet lock now closes on the e2e
+  # side. Keeping the scan wide means a direct `npx playwright test` is still
+  # caught here, exactly as before.
   local live
   live=$(ps -eo pid=,args= 2>/dev/null \
-    | grep -E 'playwright([ ]|.*/)test([ ]|$)' \
+    | grep -E '(@playwright/test/cli\.js|playwright([ ]|.*/)test)([ ]|$)' \
     | while read -r pid rest; do
         case "$ancestors" in *" $pid "*) continue ;; esac
         printf '%s %s\n' "$pid" "$rest"
