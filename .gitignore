@@ -7,6 +7,9 @@ test-results/
 conformance/root-ca.crt
 conformance/suite-localhost-emobix.crt
 conformance/suite-localhost-emobix.key
+# CERTPLANE-1: the upstream (Let\'s Encrypt staging) issuer harvested from
+# acme\'s own stored chain by `make conformance-up` - never commit.
+conformance/staging-ca.crt
 
 # RIGMODE-1 generated rig state: the domain mode file (make conformance-domain-*)
 # + the regenerated family extra_hosts (conformance-up) - never commit.
