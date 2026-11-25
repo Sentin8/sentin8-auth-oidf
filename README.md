@@ -48,6 +48,12 @@ Non-campaign spec:
 
 - Smoke (harness boot check)
 
+## Certification record
+
+`sentin8-auth-test/OIDF-CERTIFICATION.md` is the authoritative record of what
+is certified, what is still open, and what each open bucket costs. Read that
+before starting a campaign: it says which cells a run is expected to close.
+
 ## How it drives the suite
 
 The suite's front channel (login) is executed by the running-test page's
@@ -101,6 +107,7 @@ stays PENDING at the plan gate.
 | `tests/oid4vp.spec.ts` | OID4VP verifier - the HAIP verifier plan + the plain plan over cert-vp |
 | `tests/smoke.spec.ts` | Harness boot check - one module end-to-end through the Flutter auth-ui (not a certification campaign) |
 | `results/` | Per-module logs + the campaign results JSON (gitignored) |
+| `sentin8-auth-test/OIDF-CERTIFICATION.md` | **The certification record** - every certified cell with its signed result + plan view, every open cell, and what closing each open bucket costs |
 
 ## Prerequisites (one-time)
 
