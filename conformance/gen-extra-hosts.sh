@@ -33,11 +33,15 @@ DOMAIN=""
 for MODE_FILE in "$ROOT/conformance/domain.env" "$HERE/domain.env"; do
   if [ -n "$DOMAIN" ]; then break; fi
   if [ -f "$MODE_FILE" ]; then
-    DOMAIN="$(grep -m1 '^SENTIN8_DOMAIN=' "$MODE_FILE" | cut -d= -f2 | tr -d '"' | tr -d ' ')"
+    # `|| true`: RIGMODE-3 requires the mode file to omit SENTIN8_DOMAIN, so
+    # "no match" is the EXPECTED answer and must fall through to the tree
+    # .env - not abort (this script runs without -e so it currently survives,
+    # but the same line in conformance-seed.sh exits the script silently).
+    DOMAIN="$(grep -m1 '^SENTIN8_DOMAIN=' "$MODE_FILE" | cut -d= -f2 | tr -d '"' | tr -d ' ' || true)"
   fi
 done
 if [ -z "$DOMAIN" ] && [ -f "$TREE_ROOT/.env" ]; then
-  DOMAIN="$(grep -m1 '^SENTIN8_DOMAIN=' "$TREE_ROOT/.env" | cut -d= -f2 | tr -d '"' | tr -d ' ')"
+  DOMAIN="$(grep -m1 '^SENTIN8_DOMAIN=' "$TREE_ROOT/.env" | cut -d= -f2 | tr -d '"' | tr -d ' ' || true)"
 fi
 DOMAIN="${DOMAIN:-local.sentin8.dev}"
 
